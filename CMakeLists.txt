@@ -7,7 +7,9 @@ file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp"  "src/*.h")
 
 find_package(Vulkan REQUIRED)
 
+add_subdirectory(thirdparty/glm)
+
 add_executable(Posideon ${SOURCES})
 target_include_directories(Posideon PUBLIC src)
 target_compile_definitions(Posideon PRIVATE POSIDEON_ASSERTS)
-target_link_libraries(Posideon PRIVATE Vulkan::Vulkan)
+target_link_libraries(Posideon PRIVATE Vulkan::Vulkan glm)

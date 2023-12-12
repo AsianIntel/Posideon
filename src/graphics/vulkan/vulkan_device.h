@@ -2,8 +2,22 @@
 
 #include "defines.h"
 #include <vulkan/vulkan.hpp>
+#include <optional>
 
 namespace Posideon {
+    struct VulkanBuffer {
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+    };
+
+    struct PipelineDescriptor {
+        uint32_t vertex_stride;
+        std::vector<VkVertexInputAttributeDescription> vertex_input_attributes;
+        std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
+        VkPipelineLayout layout;
+        VkFormat swapchain_format;
+    };
+
     struct VulkanPhysicalDevice {
         VkPhysicalDevice raw;
         VkPhysicalDeviceProperties device_properties{};
@@ -17,6 +31,9 @@ namespace Posideon {
     class VulkanDevice {
         VulkanPhysicalDevice m_physicalDevice;
         VkDevice m_device;
+
+    private:
+        std::optional<uint32_t> get_memory_type_index(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
     public:
         VulkanDevice(VulkanPhysicalDevice const& physical_device, VkDevice device): m_physicalDevice(physical_device), m_device(device) {}
@@ -32,10 +49,84 @@ namespace Posideon {
         [[nodiscard]] VkImageView create_image_view(const VkImageViewCreateInfo& create_info) const;
         [[nodiscard]] VkCommandPool create_command_pool() const;
         [[nodiscard]] VkSemaphore create_semaphore() const;
+        [[nodiscard]] VkFence create_fence(bool signaled) const;
+        [[nodiscard]] VkPipelineLayout create_pipeline_layout() const;
+        [[nodiscard]] VkPipeline create_pipeline(const PipelineDescriptor& descriptor) const;
+        [[nodiscard]] VkShaderModule create_shader_module(const std::vector<char>& code) const;
 
         uint32_t acquire_next_image(VkSwapchainKHR swapchain, VkSemaphore semaphore) const;
+        VkResult wait_for_fence(VkFence fence);
+        VkResult reset_fence(VkFence fence);
 
         void destroy_image_view(VkImageView image_view) const;
         void destroy_swapchain(VkSwapchainKHR swapchain) const;
+
+        VulkanBuffer create_buffer(VkBufferUsageFlags usage, VkDeviceSize size) {
+            VkBufferCreateInfo createInfo{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                    .size = size,
+                    .usage = usage
+            };
+
+            VkBuffer buffer;
+            VkResult res = vkCreateBuffer(m_device, &createInfo, nullptr, &buffer);
+            POSIDEON_ASSERT(res == VK_SUCCESS)
+
+            VkMemoryRequirements memoryRequirements;
+            vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
+
+            VkMemoryAllocateInfo allocInfo{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                    .allocationSize = memoryRequirements.size,
+                    .memoryTypeIndex = get_memory_type_index(memoryRequirements.memoryTypeBits,
+                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT).value(),
+            };
+
+            VkDeviceMemory memory;
+            res = vkAllocateMemory(m_device, &allocInfo, nullptr, &memory);
+            POSIDEON_ASSERT(res == VK_SUCCESS)
+
+            vkBindBufferMemory(m_device, buffer, memory, 0);
+
+            return { buffer, memory };
+        }
+
+        template<typename T>
+        VulkanBuffer create_buffer(VkBufferUsageFlags usage, VkDeviceSize size, T* data) {
+            VkBufferCreateInfo createInfo{
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                    .size = size * sizeof(T),
+                    .usage = usage
+            };
+
+            VkBuffer buffer;
+            VkResult res = vkCreateBuffer(m_device, &createInfo, nullptr, &buffer);
+            POSIDEON_ASSERT(res == VK_SUCCESS)
+
+            VkMemoryRequirements memoryRequirements;
+            vkGetBufferMemoryRequirements(m_device, buffer, &memoryRequirements);
+
+            VkMemoryAllocateInfo allocInfo{
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                    .allocationSize = memoryRequirements.size,
+                    .memoryTypeIndex = get_memory_type_index(memoryRequirements.memoryTypeBits,
+                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT).value(),
+            };
+
+            VkDeviceMemory memory;
+            res = vkAllocateMemory(m_device, &allocInfo, nullptr, &memory);
+            POSIDEON_ASSERT(res == VK_SUCCESS)
+
+            void* bufferData;
+            vkMapMemory(m_device, memory, 0, allocInfo.allocationSize, 0, &bufferData);
+            memcpy(bufferData, data, createInfo.size);
+            vkUnmapMemory(m_device, memory);
+
+            vkBindBufferMemory(m_device, buffer, memory, 0);
+
+            return { buffer, memory };
+        }
     };
 }

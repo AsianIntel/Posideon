@@ -1,6 +1,6 @@
 #include "forward_renderer.h"
 #include <iostream>
-
+#include <fstream>
 #include "graphics/vulkan/vulkan_command_encoder.h"
 
 #undef min
@@ -8,6 +8,19 @@
 
 namespace Posideon {
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface);
+
+    static std::vector<char> readFile(const std::string& filename) {
+        std::ifstream file(filename, std::ios::ate | std::ios::binary);
+        POSIDEON_ASSERT(file.is_open());
+
+        size_t fileSize = (size_t)file.tellg();
+        std::vector<char> buffer(fileSize);
+        file.seekg(0);
+        file.read(buffer.data(), fileSize);
+        file.close();
+
+        return buffer;
+    }
 
     ForwardRenderer init_forward_renderer(HINSTANCE hinstance, HWND hwnd, uint32_t width, uint32_t height) {
         VkInstance instance = init_vulkan_instance();
@@ -71,6 +84,10 @@ namespace Posideon {
 
         VkSemaphore image_available_semaphore = vulkan_device.create_semaphore();
         VkSemaphore rendering_finished_semaphore = vulkan_device.create_semaphore();
+        VkFence fence = vulkan_device.create_fence(true);
+
+        VkShaderModule vertex_shader = vulkan_device.create_shader_module(readFile("../../../assets/shaders/shader.vert.spv"));
+        VkShaderModule fragment_shader = vulkan_device.create_shader_module(readFile("../../../assets/shaders/shader.frag.spv"));
 
         ForwardRenderer renderer {
             .instance = instance,
@@ -80,6 +97,7 @@ namespace Posideon {
             .graphics_queue = graphics_queue,
             .image_available_semaphore = image_available_semaphore,
             .rendering_finished_semaphore = rendering_finished_semaphore,
+            .fence = fence,
             .width = width,
             .height = height,
             .vsync = false,
@@ -87,6 +105,43 @@ namespace Posideon {
 
         renderer.create_swapchain();
         renderer.allocate_command_buffers();
+
+        VkPipelineLayout pipeline_layout = vulkan_device.create_pipeline_layout();
+        VkPipeline pipeline = vulkan_device.create_pipeline({
+            .vertex_stride = sizeof(Vertex),
+            .vertex_input_attributes = {
+                VkVertexInputAttributeDescription {
+                    .location = 0,
+                    .binding = 0,
+                    .format = VK_FORMAT_R32G32B32_SFLOAT,
+                    .offset = offsetof(Vertex, position)
+                },
+                VkVertexInputAttributeDescription {
+                    .location = 1,
+                    .binding = 0,
+                    .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+                    .offset = offsetof(Vertex, color)
+                },
+            },
+            .shader_stages = {
+                VkPipelineShaderStageCreateInfo {
+                    .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                    .stage = VK_SHADER_STAGE_VERTEX_BIT,
+                    .module = vertex_shader,
+                    .pName = "main",
+                },
+                VkPipelineShaderStageCreateInfo {
+                    .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                    .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+                    .module = fragment_shader,
+                    .pName = "main",
+                }
+            },
+            .layout = pipeline_layout,
+            .swapchain_format = renderer.swapchain_format
+        });
+        renderer.pipeline_layout = pipeline_layout;
+        renderer.pipeline = pipeline;
 
         return renderer;
     }
@@ -101,10 +156,7 @@ namespace Posideon {
         VkPresentModeKHR swapchain_present_mode = VK_PRESENT_MODE_FIFO_KHR;
         if (!vsync) {
             for (const auto present_mode: present_modes) {
-                if (present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR) {
-                    swapchain_present_mode = present_mode;
-                    break;
-                } else if (present_mode == VK_PRESENT_MODE_MAILBOX_KHR) {
+                if (present_mode == VK_PRESENT_MODE_MAILBOX_KHR) {
                     swapchain_present_mode = present_mode;
                     break;
                 }
@@ -132,7 +184,6 @@ namespace Posideon {
         }
 
         const std::vector<VkSurfaceFormatKHR> surface_formats = device.get_surface_formats(surface);
-        VkFormat swapchain_format;
         VkColorSpaceKHR swapchain_color_space;
         bool format_found = false;
         for (auto&& surface_format: surface_formats) {
@@ -230,6 +281,9 @@ namespace Posideon {
     }
 
     void ForwardRenderer::render() {
+        device.wait_for_fence(fence);
+        device.reset_fence(fence);
+
         uint32_t image_index = device.acquire_next_image(swapchain, image_available_semaphore);
         VulkanCommandEncoder command_encoder(command_buffers[image_index]);
 
@@ -263,6 +317,12 @@ namespace Posideon {
         command_encoder.set_viewport(width, height);
         command_encoder.set_scissor(width, height);
 
+        command_encoder.bind_pipeline(pipeline);
+        for (const auto& mesh : meshes) {
+            command_encoder.bind_vertex_buffer(mesh.vertex_buffer.buffer, 0);
+            command_encoder.draw(static_cast<uint32_t>(mesh.vertices.size()));
+        }
+
         command_encoder.end_rendering();
         command_encoder.transition_image(swapchain_images[image_index], {
             .src_access_mask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
@@ -285,7 +345,7 @@ namespace Posideon {
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &rendering_finished_semaphore,
         };
-        VkResult res = vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+        VkResult res = vkQueueSubmit(graphics_queue, 1, &submit_info, fence);
         POSIDEON_ASSERT(res == VK_SUCCESS)
 
         VkPresentInfoKHR present_info {
@@ -298,6 +358,11 @@ namespace Posideon {
         };
         res = vkQueuePresentKHR(graphics_queue, &present_info);
         POSIDEON_ASSERT(res == VK_SUCCESS)
+    }
+
+    void ForwardRenderer::add_mesh(Mesh mesh) {
+        mesh.vertex_buffer = device.create_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mesh.vertices.size(), mesh.vertices.data());
+        meshes.emplace_back(mesh);
     }
 
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface) {

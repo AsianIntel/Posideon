@@ -1,6 +1,16 @@
 #include "vulkan_device.h"
 
 namespace Posideon {
+    std::optional<uint32_t> VulkanDevice::get_memory_type_index(uint32_t typeFilter, VkMemoryPropertyFlags properties) const {
+        for (uint32_t i = 0; i < m_physicalDevice.device_memory_properties.memoryTypeCount; i++) {
+            if (typeFilter & (1 << i) && (m_physicalDevice.device_memory_properties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+
+        return {};
+    }
+
     VkQueue VulkanDevice::get_queue() const {
         VkQueue queue;
         vkGetDeviceQueue(m_device, m_physicalDevice.graphics_family_index, 0, &queue);
@@ -93,6 +103,129 @@ namespace Posideon {
         return semaphore;
     }
 
+    VkFence VulkanDevice::create_fence(bool signaled) const {
+        VkFenceCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = signaled ? VK_FENCE_CREATE_SIGNALED_BIT : VkFenceCreateFlags(0),
+        };
+
+        VkFence fence;
+        VkResult res = vkCreateFence(m_device, &create_info, nullptr, &fence);
+        POSIDEON_ASSERT(res == VK_SUCCESS);
+        return fence;
+    }
+
+    VkPipelineLayout VulkanDevice::create_pipeline_layout() const {
+        const VkPipelineLayoutCreateInfo create_info{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        };
+
+        VkPipelineLayout pipeline_layout;
+        VkResult res = vkCreatePipelineLayout(m_device, &create_info, nullptr, &pipeline_layout);
+        POSIDEON_ASSERT(res == VK_SUCCESS);
+
+        return pipeline_layout;
+    }
+
+    VkPipeline VulkanDevice::create_pipeline(const PipelineDescriptor& descriptor) const {
+        VkVertexInputBindingDescription vertex_input_binding{
+            .binding = 0,
+            .stride = descriptor.vertex_stride,
+            .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
+        };
+
+        VkPipelineVertexInputStateCreateInfo vertex_input_state{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &vertex_input_binding,
+            .vertexAttributeDescriptionCount = static_cast<uint32_t>(descriptor.vertex_input_attributes.size()),
+            .pVertexAttributeDescriptions = descriptor.vertex_input_attributes.data()
+        };
+
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+        };
+
+        VkPipelineRasterizationStateCreateInfo rasterization{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .polygonMode = VK_POLYGON_MODE_FILL,
+            .cullMode = VK_CULL_MODE_BACK_BIT,
+            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+            .lineWidth = 1.0f
+        };
+
+        VkPipelineColorBlendAttachmentState blend_attachment{
+            .blendEnable = VK_FALSE,
+            .colorWriteMask = 0xf
+        };
+
+        VkPipelineColorBlendStateCreateInfo color_blend_state{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .attachmentCount = 1,
+            .pAttachments = &blend_attachment
+        };
+
+        std::vector<VkDynamicState> dynamic_states = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+        VkPipelineDynamicStateCreateInfo dynamic_state{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            .dynamicStateCount = static_cast<uint32_t>(dynamic_states.size()),
+            .pDynamicStates = dynamic_states.data()
+        };
+
+        VkPipelineViewportStateCreateInfo viewport_state{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .viewportCount = 1,
+            .scissorCount = 1
+        };
+
+        VkPipelineMultisampleStateCreateInfo multisampling{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        };
+
+        VkPipelineRenderingCreateInfo pipeline_rendering{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &descriptor.swapchain_format
+        };
+
+        VkGraphicsPipelineCreateInfo pipeline_info{
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .pNext = &pipeline_rendering,
+            .stageCount = static_cast<uint32_t>(descriptor.shader_stages.size()),
+            .pStages = descriptor.shader_stages.data(),
+            .pVertexInputState = &vertex_input_state,
+            .pInputAssemblyState = &input_assembly,
+            .pViewportState = &viewport_state,
+            .pRasterizationState = &rasterization,
+            .pMultisampleState = &multisampling,
+            .pColorBlendState = &color_blend_state,
+            .pDynamicState = &dynamic_state,
+            .layout = descriptor.layout,
+        };
+
+        VkPipeline pipeline;
+        VkResult res = vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline);
+        POSIDEON_ASSERT(res == VK_SUCCESS);
+
+        return pipeline;
+    }
+
+    VkShaderModule VulkanDevice::create_shader_module(const std::vector<char>& code) const {
+        VkShaderModuleCreateInfo create_info{
+                .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                .codeSize = code.size(),
+                .pCode = reinterpret_cast<const uint32_t*>(code.data())
+        };
+
+        VkShaderModule shader_module;
+        VkResult res = vkCreateShaderModule(m_device, &create_info, nullptr, &shader_module);
+        POSIDEON_ASSERT(res == VK_SUCCESS);
+
+        return shader_module;
+    }
+
     uint32_t VulkanDevice::acquire_next_image(VkSwapchainKHR swapchain, VkSemaphore semaphore) const {
         uint32_t image_index;
         VkResult res = vkAcquireNextImageKHR(m_device, swapchain, UINT64_MAX, semaphore, nullptr, &image_index);
@@ -102,6 +235,14 @@ namespace Posideon {
 
     void VulkanDevice::destroy_image_view(VkImageView image_view) const {
         vkDestroyImageView(m_device, image_view, nullptr);
+    }
+
+    VkResult VulkanDevice::wait_for_fence(VkFence fence) {
+        return vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    }
+
+    VkResult VulkanDevice::reset_fence(VkFence fence) {
+        return vkResetFences(m_device, 1, &fence);
     }
 
     void VulkanDevice::destroy_swapchain(VkSwapchainKHR swapchain) const {

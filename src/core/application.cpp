@@ -11,6 +11,15 @@ namespace Posideon {
 
         m_window = std::make_unique<Win32Window>(Win32Window(width, height));
         m_renderer = std::make_unique<ForwardRenderer>(init_forward_renderer(m_window->hInstance, m_window->m_hwnd, m_window->m_width, m_window->m_height));
+
+        Mesh mesh{
+            .vertices = {
+                Vertex {.position = { 0.0f, 0.25f, 0.0f }, .color = { 1.0f, 0.0f, 0.0f, 1.0f } },
+                Vertex {.position = { -0.25f, -0.25f, 0.0f }, .color = { 0.0f, 1.0f, 0.0f, 1.0f }},
+                Vertex {.position = { 0.25f, -0.25f, 0.0f }, .color = { 0.0f, 0.0f, 1.0f, 1.0f } }
+            }
+        };
+        m_renderer->add_mesh(mesh);
     }
 
     void Application::run() {

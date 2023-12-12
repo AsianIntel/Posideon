@@ -24,6 +24,9 @@ namespace Posideon {
         void start_rendering(VkRect2D render_area, const std::vector<VkRenderingAttachmentInfo>& attachments) const;
         void set_viewport(uint32_t width, uint32_t height) const;
         void set_scissor(uint32_t width, uint32_t height) const;
+        void bind_pipeline(VkPipeline pipeline) const;
+        void bind_vertex_buffer(VkBuffer buffer, VkDeviceSize offset) const;
+        void draw(uint32_t vertex_count) const;
         void end_rendering() const;
         VkCommandBuffer finish() const;
     };

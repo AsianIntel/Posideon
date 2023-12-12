@@ -66,6 +66,18 @@ namespace Posideon {
         vkCmdSetScissor(m_buffer, 0, 1, &scissor);
     }
 
+    void VulkanCommandEncoder::bind_pipeline(VkPipeline pipeline) const {
+        vkCmdBindPipeline(m_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    }
+
+    void VulkanCommandEncoder::bind_vertex_buffer(VkBuffer buffer, VkDeviceSize offset) const {
+        vkCmdBindVertexBuffers(m_buffer, 0, 1, &buffer, &offset);
+    }
+
+    void VulkanCommandEncoder::draw(uint32_t vertex_count) const {
+        vkCmdDraw(m_buffer, 3, 1, 0, 0);
+    }
+
     void VulkanCommandEncoder::end_rendering() const {
         vkCmdEndRendering(m_buffer);
     }
