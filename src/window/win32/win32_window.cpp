@@ -7,17 +7,18 @@ namespace Posideon {
         m_width = width;
         m_height = height;
 
+        hInstance = GetModuleHandle(nullptr);
         WNDCLASSEX wc{
                 .cbSize = sizeof(WNDCLASSEX),
                 .style = CS_HREDRAW | CS_VREDRAW,
                 .lpfnWndProc = wnd_proc,
-                .hInstance = GetModuleHandle(nullptr),
+                .hInstance = hInstance,
                 .hCursor = LoadCursor(nullptr, IDC_ARROW),
                 .lpszClassName = "Posideon Engine",
         };
         RegisterClassEx(&wc);
 
-        RECT windowRect = {.left = 0, .top = 0, .right = 1080, .bottom = 960};
+        RECT windowRect = {.left = 0, .top = 0, .right = static_cast<LONG>(width), .bottom = static_cast<LONG>(height)};
         AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
         m_hwnd = CreateWindow(
@@ -30,7 +31,7 @@ namespace Posideon {
                 windowRect.bottom - windowRect.top,
                 nullptr,
                 nullptr,
-                GetModuleHandle(nullptr),
+                hInstance,
                 this
         );
         POSIDEON_ASSERT(m_hwnd != nullptr)

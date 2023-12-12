@@ -10,6 +10,7 @@
 namespace Posideon {
     struct Win32Window : public Window {
         HWND m_hwnd;
+        HINSTANCE hInstance;
         uint32_t m_width;
         uint32_t m_height;
 
