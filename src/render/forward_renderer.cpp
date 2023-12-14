@@ -11,7 +11,7 @@ namespace Posideon {
 
     static std::vector<char> readFile(const std::string& filename) {
         std::ifstream file(filename, std::ios::ate | std::ios::binary);
-        POSIDEON_ASSERT(file.is_open());
+        POSIDEON_ASSERT(file.is_open())
 
         size_t fileSize = (size_t)file.tellg();
         std::vector<char> buffer(fileSize);
@@ -86,8 +86,8 @@ namespace Posideon {
         VkSemaphore rendering_finished_semaphore = vulkan_device.create_semaphore();
         VkFence fence = vulkan_device.create_fence(true);
 
-        VkShaderModule vertex_shader = vulkan_device.create_shader_module(readFile("../../../assets/shaders/shader.vert.spv"));
-        VkShaderModule fragment_shader = vulkan_device.create_shader_module(readFile("../../../assets/shaders/shader.frag.spv"));
+        VkShaderModule vertex_shader = vulkan_device.create_shader_module(readFile("../assets/shaders/shader.vert.spv"));
+        VkShaderModule fragment_shader = vulkan_device.create_shader_module(readFile("../assets/shaders/shader.frag.spv"));
 
         ForwardRenderer renderer {
             .instance = instance,
@@ -105,8 +105,9 @@ namespace Posideon {
 
         renderer.create_swapchain();
         renderer.allocate_command_buffers();
+        renderer.create_descriptor_objects();
 
-        VkPipelineLayout pipeline_layout = vulkan_device.create_pipeline_layout();
+        VkPipelineLayout pipeline_layout = vulkan_device.create_pipeline_layout({ renderer.descriptor_set_layout });
         VkPipeline pipeline = vulkan_device.create_pipeline({
             .vertex_stride = sizeof(Vertex),
             .vertex_input_attributes = {
@@ -114,13 +115,13 @@ namespace Posideon {
                     .location = 0,
                     .binding = 0,
                     .format = VK_FORMAT_R32G32B32_SFLOAT,
-                    .offset = offsetof(Vertex, position)
+                    .offset = static_cast<uint32_t>(offsetof(Vertex, position))
                 },
                 VkVertexInputAttributeDescription {
                     .location = 1,
                     .binding = 0,
                     .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-                    .offset = offsetof(Vertex, color)
+                    .offset = static_cast<uint32_t>(offsetof(Vertex, color))
                 },
             },
             .shader_stages = {
@@ -229,7 +230,7 @@ namespace Posideon {
             .imageColorSpace = swapchain_color_space,
             .imageExtent = swapchain_extent,
             .imageArrayLayers = 1,
-            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageUsage = image_usage,
             .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .preTransform = static_cast<VkSurfaceTransformFlagBitsKHR>(pre_transform),
             .compositeAlpha = static_cast<VkCompositeAlphaFlagBitsKHR>(composite_alpha),
@@ -309,7 +310,7 @@ namespace Posideon {
                     .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                    .clearValue = VkClearColorValue { 0.0f, 0.2f, 0.4f, 1.0f }
+                    .clearValue = {VkClearColorValue { 0.0f, 0.2f, 0.4f, 1.0f }}
                 }
             }
         );
@@ -319,6 +320,7 @@ namespace Posideon {
 
         command_encoder.bind_pipeline(pipeline);
         for (const auto& mesh : meshes) {
+            command_encoder.bind_descriptor_set(pipeline_layout, { descriptor_set });
             command_encoder.bind_vertex_buffer(mesh.vertex_buffer.buffer, 0);
             command_encoder.draw(static_cast<uint32_t>(mesh.vertices.size()));
         }
@@ -360,9 +362,35 @@ namespace Posideon {
         POSIDEON_ASSERT(res == VK_SUCCESS)
     }
 
-    void ForwardRenderer::add_mesh(Mesh mesh) {
+    void ForwardRenderer::add_mesh(Mesh mesh, Transform transform) {
         mesh.vertex_buffer = device.create_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mesh.vertices.size(), mesh.vertices.data());
+        transform.buffer = device.create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 1, &transform.uBufVS);
         meshes.emplace_back(mesh);
+        transforms.emplace_back(transform);
+        VkDescriptorBufferInfo buffer_info = {
+            .buffer = transform.buffer.buffer,
+            .offset = 0,
+            .range = sizeof(transform.uBufVS)
+        };
+        device.update_descriptor_sets(descriptor_set, 0, &buffer_info);
+    }
+
+    void ForwardRenderer::create_descriptor_objects() {
+        descriptor_pool = device.create_descriptor_pool({
+            VkDescriptorPoolSize {
+                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1
+            }
+        });
+        descriptor_set_layout = device.create_descriptor_set_layout({
+            VkDescriptorSetLayoutBinding {
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+            }
+        });
+        descriptor_set = device.allocate_descriptor_sets(descriptor_pool, { descriptor_set_layout })[0];
     }
 
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface) {

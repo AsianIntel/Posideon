@@ -115,9 +115,11 @@ namespace Posideon {
         return fence;
     }
 
-    VkPipelineLayout VulkanDevice::create_pipeline_layout() const {
+    VkPipelineLayout VulkanDevice::create_pipeline_layout(const std::vector<VkDescriptorSetLayout>& set_layouts) const {
         const VkPipelineLayoutCreateInfo create_info{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = static_cast<uint32_t>(set_layouts.size()),
+            .pSetLayouts = set_layouts.data()
         };
 
         VkPipelineLayout pipeline_layout;
@@ -247,5 +249,62 @@ namespace Posideon {
 
     void VulkanDevice::destroy_swapchain(VkSwapchainKHR swapchain) const {
         vkDestroySwapchainKHR(m_device, swapchain, nullptr);
+    }
+
+    VkDescriptorPool VulkanDevice::create_descriptor_pool(const std::vector<VkDescriptorPoolSize> &pool_sizes) const {
+        const VkDescriptorPoolCreateInfo create_info {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+            .maxSets = 1,
+            .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
+            .pPoolSizes = pool_sizes.data()
+        };
+        VkDescriptorPool pool;
+        VkResult res = vkCreateDescriptorPool(m_device, &create_info, nullptr, &pool);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+        return pool;
+    }
+
+    VkDescriptorSetLayout VulkanDevice::create_descriptor_set_layout(const std::vector<VkDescriptorSetLayoutBinding> &bindings) const {
+        const VkDescriptorSetLayoutCreateInfo create_info {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = static_cast<uint32_t>(bindings.size()),
+            .pBindings = bindings.data()
+        };
+        VkDescriptorSetLayout layout;
+        VkResult res = vkCreateDescriptorSetLayout(m_device, &create_info, nullptr, &layout);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+        return layout;
+    }
+
+    std::vector<VkDescriptorSet> VulkanDevice::allocate_descriptor_sets(VkDescriptorPool descriptor_pool, const std::vector<VkDescriptorSetLayout> &descriptor_layouts) const {
+        VkDescriptorSetAllocateInfo alloc_info {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = descriptor_pool,
+            .descriptorSetCount = static_cast<uint32_t>(descriptor_layouts.size()),
+            .pSetLayouts = descriptor_layouts.data()
+        };
+        std::vector<VkDescriptorSet> descriptor_sets(descriptor_layouts.size());
+        VkResult res = vkAllocateDescriptorSets(m_device, &alloc_info, descriptor_sets.data());
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+        return descriptor_sets;
+    }
+
+    void VulkanDevice::update_descriptor_sets(VkDescriptorSet set, uint32_t binding, VkDescriptorBufferInfo* buffer_info) const {
+        VkWriteDescriptorSet write_info {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = set,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pBufferInfo = buffer_info
+        };
+        vkUpdateDescriptorSets(m_device, 1, &write_info, 0, nullptr);
+    }
+
+    void VulkanDevice::map_memory(VulkanBuffer buffer, VkDeviceSize size, void** data) const {
+        vkMapMemory(m_device, buffer.memory, 0, size, 0, data);
+    }
+
+    void VulkanDevice::unmap_memory(VulkanBuffer buffer) const {
+        vkUnmapMemory(m_device, buffer.memory);
     }
 }

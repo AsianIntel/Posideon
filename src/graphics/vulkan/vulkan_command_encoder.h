@@ -25,9 +25,10 @@ namespace Posideon {
         void set_viewport(uint32_t width, uint32_t height) const;
         void set_scissor(uint32_t width, uint32_t height) const;
         void bind_pipeline(VkPipeline pipeline) const;
+        void bind_descriptor_set(VkPipelineLayout pipeline_layout, const std::vector<VkDescriptorSet>& sets) const;
         void bind_vertex_buffer(VkBuffer buffer, VkDeviceSize offset) const;
         void draw(uint32_t vertex_count) const;
         void end_rendering() const;
-        VkCommandBuffer finish() const;
+        [[nodiscard]] VkCommandBuffer finish() const;
     };
 }

@@ -50,13 +50,19 @@ namespace Posideon {
         [[nodiscard]] VkCommandPool create_command_pool() const;
         [[nodiscard]] VkSemaphore create_semaphore() const;
         [[nodiscard]] VkFence create_fence(bool signaled) const;
-        [[nodiscard]] VkPipelineLayout create_pipeline_layout() const;
+        [[nodiscard]] VkPipelineLayout create_pipeline_layout(const std::vector<VkDescriptorSetLayout>& set_layouts) const;
         [[nodiscard]] VkPipeline create_pipeline(const PipelineDescriptor& descriptor) const;
         [[nodiscard]] VkShaderModule create_shader_module(const std::vector<char>& code) const;
+        [[nodiscard]] VkDescriptorPool create_descriptor_pool(const std::vector<VkDescriptorPoolSize>& pool_sizes) const;
+        [[nodiscard]] VkDescriptorSetLayout create_descriptor_set_layout(const std::vector<VkDescriptorSetLayoutBinding>& bindings) const;
 
         uint32_t acquire_next_image(VkSwapchainKHR swapchain, VkSemaphore semaphore) const;
         VkResult wait_for_fence(VkFence fence);
         VkResult reset_fence(VkFence fence);
+        std::vector<VkDescriptorSet> allocate_descriptor_sets(VkDescriptorPool descriptor_pool, const std::vector<VkDescriptorSetLayout>& descriptor_layouts) const;
+        void update_descriptor_sets(VkDescriptorSet set, uint32_t binding, VkDescriptorBufferInfo* buffer_info) const;
+        void map_memory(VulkanBuffer buffer, VkDeviceSize size, void** data) const;
+        void unmap_memory(VulkanBuffer buffer) const;
 
         void destroy_image_view(VkImageView image_view) const;
         void destroy_swapchain(VkSwapchainKHR swapchain) const;
