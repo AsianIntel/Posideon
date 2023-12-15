@@ -3,6 +3,8 @@
 #include "defines.h"
 #include <vulkan/vulkan.hpp>
 #include <vector>
+#include <flecs.h>
+#include <glm/glm.hpp>
 #include "graphics/vulkan/vulkan_instance.h"
 #include "graphics/vulkan/vulkan_device.h"
 #include "scene/mesh.h"
@@ -14,10 +16,7 @@ namespace Posideon {
     };
 
     struct Transform {
-        struct {
-            float displacement[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        } uBufVS;
-        VulkanBuffer buffer;
+        glm::mat4 model;
     };
 
     struct ForwardRenderer {
@@ -44,19 +43,24 @@ namespace Posideon {
 
         uint32_t width;
         uint32_t height;
-
         bool vsync;
 
-        std::vector<Mesh> meshes{};
-        std::vector<Transform> transforms{};
+        flecs::query<Mesh, Transform> query;
+        struct {
+            VulkanBuffer buffer;
+            void* mapped;
+            size_t capacity = 0;
+        } transform_dynamic;
+        std::vector<GPUMesh> meshes;
 
         void create_swapchain();
         void allocate_command_buffers();
         void create_descriptor_objects();
-        void render();
+        void add_gpu_mesh(Mesh& mesh);
 
-        void add_mesh(Mesh mesh, Transform transform);
+        void prepare_uniform_buffers();
+        void render();
     };
 
-    ForwardRenderer init_forward_renderer(HINSTANCE hinstance, HWND hwnd, uint32_t width, uint32_t height);
+    ForwardRenderer init_forward_renderer(HINSTANCE hinstance, HWND hwnd, flecs::world& world, uint32_t width, uint32_t height);
 }

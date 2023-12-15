@@ -289,12 +289,12 @@ namespace Posideon {
         return descriptor_sets;
     }
 
-    void VulkanDevice::update_descriptor_sets(VkDescriptorSet set, uint32_t binding, VkDescriptorBufferInfo* buffer_info) const {
+    void VulkanDevice::update_descriptor_sets(VkDescriptorSet set, VkDescriptorType descriptor_type, uint32_t binding, VkDescriptorBufferInfo* buffer_info) const {
         VkWriteDescriptorSet write_info {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstSet = set,
             .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorType = descriptor_type,
             .pBufferInfo = buffer_info
         };
         vkUpdateDescriptorSets(m_device, 1, &write_info, 0, nullptr);
@@ -306,5 +306,10 @@ namespace Posideon {
 
     void VulkanDevice::unmap_memory(VulkanBuffer buffer) const {
         vkUnmapMemory(m_device, buffer.memory);
+    }
+
+    void VulkanDevice::destroy_buffer(VulkanBuffer buffer) const {
+        vkFreeMemory(m_device, buffer.memory, nullptr);
+        vkDestroyBuffer(m_device, buffer.buffer, nullptr);
     }
 }

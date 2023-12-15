@@ -22,7 +22,7 @@ namespace Posideon {
         return buffer;
     }
 
-    ForwardRenderer init_forward_renderer(HINSTANCE hinstance, HWND hwnd, uint32_t width, uint32_t height) {
+    ForwardRenderer init_forward_renderer(HINSTANCE hinstance, HWND hwnd, flecs::world& world, uint32_t width, uint32_t height) {
         VkInstance instance = init_vulkan_instance();
         VkDebugUtilsMessengerEXT debug_messenger = init_debug_messenger(instance);
 
@@ -89,6 +89,8 @@ namespace Posideon {
         VkShaderModule vertex_shader = vulkan_device.create_shader_module(readFile("../assets/shaders/shader.vert.spv"));
         VkShaderModule fragment_shader = vulkan_device.create_shader_module(readFile("../assets/shaders/shader.frag.spv"));
 
+        flecs::query<Mesh, Transform> query = world.query<Mesh, Transform>();
+
         ForwardRenderer renderer {
             .instance = instance,
             .debug_messenger = debug_messenger,
@@ -101,6 +103,7 @@ namespace Posideon {
             .width = width,
             .height = height,
             .vsync = false,
+            .query = query
         };
 
         renderer.create_swapchain();
@@ -281,9 +284,38 @@ namespace Posideon {
         command_buffers = device.allocate_command_buffers(command_pool, swapchain_image_views.size());
     }
 
+    void ForwardRenderer::prepare_uniform_buffers() {
+        query.iter([&](flecs::iter& it, Mesh* mesh, Transform* transform) {
+            std::vector<glm::mat4> uniforms;
+            for (auto i: it) {
+                uniforms.push_back(transform->model);
+            }
+            size_t buffer_size = uniforms.size() * sizeof(glm::mat4);
+            if (transform_dynamic.capacity < buffer_size) {
+                if (transform_dynamic.buffer.buffer != nullptr) {
+                    device.unmap_memory(transform_dynamic.buffer);
+                    device.destroy_buffer(transform_dynamic.buffer);
+                }
+                transform_dynamic.capacity = buffer_size;
+                transform_dynamic.buffer = device.create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, buffer_size);
+                device.map_memory(transform_dynamic.buffer, buffer_size, &transform_dynamic.mapped);
+                VkDescriptorBufferInfo buffer_info {
+                    .buffer = transform_dynamic.buffer.buffer,
+                    .offset = 0,
+                    .range = buffer_size
+                };
+                device.update_descriptor_sets(descriptor_set, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 0, &buffer_info);
+            }
+
+            memcpy(transform_dynamic.mapped, uniforms.data(), buffer_size);
+        });
+    }
+
     void ForwardRenderer::render() {
         device.wait_for_fence(fence);
         device.reset_fence(fence);
+
+        prepare_uniform_buffers();
 
         uint32_t image_index = device.acquire_next_image(swapchain, image_available_semaphore);
         VulkanCommandEncoder command_encoder(command_buffers[image_index]);
@@ -319,10 +351,10 @@ namespace Posideon {
         command_encoder.set_scissor(width, height);
 
         command_encoder.bind_pipeline(pipeline);
-        for (const auto& mesh : meshes) {
-            command_encoder.bind_descriptor_set(pipeline_layout, { descriptor_set });
-            command_encoder.bind_vertex_buffer(mesh.vertex_buffer.buffer, 0);
-            command_encoder.draw(static_cast<uint32_t>(mesh.vertices.size()));
+        for (size_t i = 0; i < meshes.size(); i++) {
+            command_encoder.bind_descriptor_set(pipeline_layout, { descriptor_set }, { static_cast<uint32_t>(i * sizeof(glm::mat4)) });
+            command_encoder.bind_vertex_buffer(meshes[i].vertex_buffer.buffer, 0);
+            command_encoder.draw(meshes[i].vertex_count);
         }
 
         command_encoder.end_rendering();
@@ -362,35 +394,30 @@ namespace Posideon {
         POSIDEON_ASSERT(res == VK_SUCCESS)
     }
 
-    void ForwardRenderer::add_mesh(Mesh mesh, Transform transform) {
-        mesh.vertex_buffer = device.create_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mesh.vertices.size(), mesh.vertices.data());
-        transform.buffer = device.create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 1, &transform.uBufVS);
-        meshes.emplace_back(mesh);
-        transforms.emplace_back(transform);
-        VkDescriptorBufferInfo buffer_info = {
-            .buffer = transform.buffer.buffer,
-            .offset = 0,
-            .range = sizeof(transform.uBufVS)
-        };
-        device.update_descriptor_sets(descriptor_set, 0, &buffer_info);
-    }
-
     void ForwardRenderer::create_descriptor_objects() {
         descriptor_pool = device.create_descriptor_pool({
             VkDescriptorPoolSize {
-                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
                 .descriptorCount = 1
             }
         });
         descriptor_set_layout = device.create_descriptor_set_layout({
             VkDescriptorSetLayoutBinding {
                 .binding = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
                 .descriptorCount = 1,
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
             }
         });
         descriptor_set = device.allocate_descriptor_sets(descriptor_pool, { descriptor_set_layout })[0];
+    }
+
+    void ForwardRenderer::add_gpu_mesh(Mesh& mesh) {
+        GPUMesh gpu_mesh {
+            .vertex_buffer = device.create_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mesh.vertices.size(), mesh.vertices.data()),
+            .vertex_count = static_cast<uint32_t>(mesh.vertices.size())
+        };
+        meshes.emplace_back(gpu_mesh);
     }
 
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface) {

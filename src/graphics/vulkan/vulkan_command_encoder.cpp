@@ -88,7 +88,7 @@ namespace Posideon {
         return m_buffer;
     }
 
-    void VulkanCommandEncoder::bind_descriptor_set(VkPipelineLayout pipeline_layout, const std::vector<VkDescriptorSet> &sets) const {
-        vkCmdBindDescriptorSets(m_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, static_cast<uint32_t>(sets.size()), sets.data(), 0, nullptr);
+    void VulkanCommandEncoder::bind_descriptor_set(VkPipelineLayout pipeline_layout, const std::vector<VkDescriptorSet> &sets, const std::vector<uint32_t>& dynamic_offsets) const {
+        vkCmdBindDescriptorSets(m_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, static_cast<uint32_t>(sets.size()), sets.data(), static_cast<uint32_t>(dynamic_offsets.size()), dynamic_offsets.data());
     }
 }

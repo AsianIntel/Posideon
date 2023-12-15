@@ -60,12 +60,13 @@ namespace Posideon {
         VkResult wait_for_fence(VkFence fence);
         VkResult reset_fence(VkFence fence);
         std::vector<VkDescriptorSet> allocate_descriptor_sets(VkDescriptorPool descriptor_pool, const std::vector<VkDescriptorSetLayout>& descriptor_layouts) const;
-        void update_descriptor_sets(VkDescriptorSet set, uint32_t binding, VkDescriptorBufferInfo* buffer_info) const;
+        void update_descriptor_sets(VkDescriptorSet set, VkDescriptorType descriptor_type, uint32_t binding, VkDescriptorBufferInfo* buffer_info) const;
         void map_memory(VulkanBuffer buffer, VkDeviceSize size, void** data) const;
         void unmap_memory(VulkanBuffer buffer) const;
 
         void destroy_image_view(VkImageView image_view) const;
         void destroy_swapchain(VkSwapchainKHR swapchain) const;
+        void destroy_buffer(VulkanBuffer buffer) const;
 
         VulkanBuffer create_buffer(VkBufferUsageFlags usage, VkDeviceSize size) {
             VkBufferCreateInfo createInfo{
