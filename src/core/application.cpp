@@ -1,4 +1,5 @@
 #include "application.h"
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace Posideon {
     Application::Application() {
@@ -14,18 +15,46 @@ namespace Posideon {
 
         Mesh mesh{
             .vertices = {
-                Vertex {.position = { 0.0f, 0.25f, 0.0f }, .color = { 1.0f, 0.0f, 0.0f, 1.0f } },
-                Vertex {.position = { -0.25f, -0.25f, 0.0f }, .color = { 0.0f, 1.0f, 0.0f, 1.0f }},
-                Vertex {.position = { 0.25f, -0.25f, 0.0f }, .color = { 0.0f, 0.0f, 1.0f, 1.0f } }
+                { { -1.0f, 1.0f, 1.0f },   {0.0f, 0.0f, 1.0f, 1.0f} },
+                { { 1.0f, -1.0f, 1.0f },   {0.0f, 1.0f, 1.0f, 1.0f} },
+                { { 1.0f, 1.0f, 1.0f },    {0.0f, 1.0f, 0.0f, 1.0f} },
+                { { -1.0f, -1.0f, 1.0f },  {1.0f, 0.0f, 0.0f, 1.0f} },
+                { { -1.0f, 1.0f, -1.0f },  {1.0f, 0.0f, 1.0f, 1.0f} },
+                { { 1.0f, -1.0f, -1.0f },  {1.0f, 1.0f, 1.0f, 1.0f} },
+                { { 1.0f, 1.0f, -1.0f },   {1.0f, 1.0f, 0.0f, 1.0f} },
+                { { -1.0f, -1.0f, -1.0f }, {0.0f, 0.0f, 0.0f, 1.0f} }
+            },
+            .indices = {
+                0,1,2, // Top
+                0,3,1,
+                3,5,1, // Front
+                3,7,5,
+                0,4,7, //Right
+                0,7,3,
+                1,6,2, // Left
+                1,5,6,
+                2,6,4, // Back
+                2,4,0,
+                6,7,4, // Bottom
+                6,5,7,
             }
         };
-        Transform transform { .model = glm::mat4(0.0f) };
 
         {
+            Transform transform { .model = glm::mat4(1.0f) };
             auto entity = m_world.entity();
             entity.set<Mesh>(mesh);
             entity.set<Transform>(transform);
             m_renderer->add_gpu_mesh(mesh);
+        }
+
+        {
+            float aspect_ratio = static_cast<float>(width) / static_cast<float>(height);
+            Transform transform { .model = glm::lookAt(glm::vec3(2.0f, -4.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)) };
+            Camera camera { .projection = glm::perspective(glm::radians(60.0f), aspect_ratio, 0.1f, 1000.0f) };
+            auto entity = m_world.entity();
+            entity.set<Camera>(camera);
+            entity.set<Transform>(transform);
         }
 
         transform_query = m_world.query<Transform>();
@@ -36,10 +65,10 @@ namespace Posideon {
             m_window->run();
 
             transform_query.each([](Transform& transform) {
-                transform.model[0][0] += 0.008f;
+                /*transform.model[0][0] += 0.008f;
                 if (transform.model[0][0] > 1.25f) {
                     transform.model[0][0] = -1.25f;
-                }
+                }*/
             });
 
             m_renderer->render();

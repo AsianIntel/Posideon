@@ -82,6 +82,38 @@ namespace Posideon {
         const VulkanDevice vulkan_device(physical_device, device);
         VkQueue graphics_queue = vulkan_device.get_queue();
 
+        VkFormat depth_format = VK_FORMAT_UNDEFINED;
+        std::vector<VkFormat> depth_formats = {
+                VK_FORMAT_D32_SFLOAT_S8_UINT,
+                VK_FORMAT_D32_SFLOAT,
+                VK_FORMAT_D24_UNORM_S8_UINT,
+                VK_FORMAT_D16_UNORM_S8_UINT,
+                VK_FORMAT_D16_UNORM
+        };
+        VkFormatProperties format_properties;
+        for (auto format: depth_formats) {
+            vkGetPhysicalDeviceFormatProperties(physical_device.raw, format, &format_properties);
+            if (format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+                depth_format = format;
+                break;
+            }
+        }
+        POSIDEON_ASSERT(depth_format != VK_FORMAT_UNDEFINED)
+        VulkanImage depth_image = vulkan_device.create_image(ImageDescriptor {
+            .image_type = VK_IMAGE_TYPE_2D,
+            .format = depth_format,
+            .width = width,
+            .height = height,
+            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .initial_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .memory_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+        });
+        VkImageView depth_image_view = vulkan_device.create_image_view(depth_image.image, ImageViewDescriptor {
+            .image_view_type = VK_IMAGE_VIEW_TYPE_2D,
+            .format = depth_format,
+            .aspect_mask = static_cast<VkImageAspectFlags>((depth_format >= VK_FORMAT_D16_UNORM_S8_UINT) ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_DEPTH_BIT)
+        });
+
         VkSemaphore image_available_semaphore = vulkan_device.create_semaphore();
         VkSemaphore rendering_finished_semaphore = vulkan_device.create_semaphore();
         VkFence fence = vulkan_device.create_fence(true);
@@ -89,7 +121,8 @@ namespace Posideon {
         VkShaderModule vertex_shader = vulkan_device.create_shader_module(readFile("../assets/shaders/shader.vert.spv"));
         VkShaderModule fragment_shader = vulkan_device.create_shader_module(readFile("../assets/shaders/shader.frag.spv"));
 
-        flecs::query<Mesh, Transform> query = world.query<Mesh, Transform>();
+        flecs::query<Mesh, Transform> mesh_query = world.query<Mesh, Transform>();
+        flecs::query<Camera, Transform> view_query = world.query<Camera, Transform>();
 
         ForwardRenderer renderer {
             .instance = instance,
@@ -100,17 +133,40 @@ namespace Posideon {
             .image_available_semaphore = image_available_semaphore,
             .rendering_finished_semaphore = rendering_finished_semaphore,
             .fence = fence,
+            .depth_format = depth_format,
+            .depth_image = depth_image,
+            .depth_image_view = depth_image_view,
             .width = width,
             .height = height,
             .vsync = false,
-            .query = query
+            .mesh_query = mesh_query,
+            .view_query = view_query,
         };
 
         renderer.create_swapchain();
         renderer.allocate_command_buffers();
         renderer.create_descriptor_objects();
 
-        VkPipelineLayout pipeline_layout = vulkan_device.create_pipeline_layout({ renderer.descriptor_set_layout });
+        VkDescriptorSetLayout model_set_layout = vulkan_device.create_descriptor_set_layout({
+            VkDescriptorSetLayoutBinding {
+                    .binding = 0,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+                    .descriptorCount = 1,
+                    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+            }
+        });
+        VkDescriptorSet model_descriptor_set = vulkan_device.allocate_descriptor_sets(renderer.descriptor_pool, { model_set_layout })[0];
+        VkDescriptorSetLayout view_set_layout = vulkan_device.create_descriptor_set_layout({
+            VkDescriptorSetLayoutBinding {
+                    .binding = 0,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                    .descriptorCount = 1,
+                    .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+            }
+        });
+        VkDescriptorSet view_descriptor_set = vulkan_device.allocate_descriptor_sets(renderer.descriptor_pool, { view_set_layout })[0];
+
+        VkPipelineLayout pipeline_layout = vulkan_device.create_pipeline_layout({ model_set_layout, view_set_layout });
         VkPipeline pipeline = vulkan_device.create_pipeline({
             .vertex_stride = sizeof(Vertex),
             .vertex_input_attributes = {
@@ -142,10 +198,19 @@ namespace Posideon {
                 }
             },
             .layout = pipeline_layout,
-            .swapchain_format = renderer.swapchain_format
+            .swapchain_format = renderer.swapchain_format,
+            .depth_format = depth_format,
+            .stencil_format = (depth_format >= VK_FORMAT_D16_UNORM_S8_UINT) ? depth_format : VK_FORMAT_UNDEFINED
         });
-        renderer.pipeline_layout = pipeline_layout;
-        renderer.pipeline = pipeline;
+        MeshPipeline mesh_pipeline {
+            .model_descriptor_layout = model_set_layout,
+            .model_set = model_descriptor_set,
+            .view_descriptor_layout = view_set_layout,
+            .view_set = view_descriptor_set,
+            .pipeline_layout = pipeline_layout,
+            .pipeline = pipeline
+        };
+        renderer.mesh_pipeline = mesh_pipeline;
 
         return renderer;
     }
@@ -253,29 +318,13 @@ namespace Posideon {
 
         swapchain_images = device.get_swapchain_images(swapchain);
 
-        VkImageViewCreateInfo image_view_create_info {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = swapchain_format,
-            .components = {
-                .r = VK_COMPONENT_SWIZZLE_R,
-                .g = VK_COMPONENT_SWIZZLE_G,
-                .b = VK_COMPONENT_SWIZZLE_B,
-                .a = VK_COMPONENT_SWIZZLE_A
-            },
-            .subresourceRange =  {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            },
-        };
-
         swapchain_image_views.resize(swapchain_images.size());
         for (uint32_t i = 0; i < swapchain_images.size(); i++) {
-            image_view_create_info.image = swapchain_images[i];
-            swapchain_image_views[i] = device.create_image_view(image_view_create_info);
+            swapchain_image_views[i] = device.create_image_view(swapchain_images[i], ImageViewDescriptor {
+                .image_view_type = VK_IMAGE_VIEW_TYPE_2D,
+                .format = swapchain_format,
+                .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT
+            });
         }
     }
 
@@ -285,7 +334,7 @@ namespace Posideon {
     }
 
     void ForwardRenderer::prepare_uniform_buffers() {
-        query.iter([&](flecs::iter& it, Mesh* mesh, Transform* transform) {
+        mesh_query.iter([&](flecs::iter& it, Mesh* mesh, Transform* transform) {
             std::vector<glm::mat4> uniforms;
             for (auto i: it) {
                 uniforms.push_back(transform->model);
@@ -304,10 +353,29 @@ namespace Posideon {
                     .offset = 0,
                     .range = buffer_size
                 };
-                device.update_descriptor_sets(descriptor_set, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 0, &buffer_info);
+                device.update_descriptor_sets(mesh_pipeline.model_set, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 0, &buffer_info);
             }
 
             memcpy(transform_dynamic.mapped, uniforms.data(), buffer_size);
+        });
+
+        view_query.iter([&](flecs::iter& it, Camera* camera, Transform* transform) {
+            ExtractedView extracted_view {
+                .projection = camera->projection,
+                .view = transform->model,
+            };
+            if (view_buffer.buffer.buffer == nullptr) {
+                view_buffer.buffer = device.create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(ExtractedView));
+                device.map_memory(view_buffer.buffer, sizeof(ExtractedView), &view_buffer.mapped);
+                VkDescriptorBufferInfo buffer_info {
+                    .buffer = view_buffer.buffer.buffer,
+                    .offset = 0,
+                    .range = sizeof(ExtractedView),
+                };
+                device.update_descriptor_sets(mesh_pipeline.view_set, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &buffer_info);
+            }
+
+            memcpy(view_buffer.mapped, &extracted_view, sizeof(ExtractedView));
         });
     }
 
@@ -327,9 +395,30 @@ namespace Posideon {
             .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
             .new_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+            .dst_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT
+        });
+        command_encoder.transition_image(depth_image.image, {
+            .dst_access_mask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .old_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .new_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .src_stage_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            .dst_stage_mask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+            .aspect_mask = static_cast<VkImageAspectFlags>((depth_format >= VK_FORMAT_D16_UNORM_S8_UINT) ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) : VK_IMAGE_ASPECT_DEPTH_BIT)
         });
 
+        VkRenderingAttachmentInfo depth_attachment {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = depth_image_view,
+            .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .clearValue = { .depthStencil = VkClearDepthStencilValue {1.0f, 0} }
+        };
+        VkRenderingAttachmentInfo* stencil_attachment = nullptr;
+        if (depth_format >= VK_FORMAT_D16_UNORM_S8_UINT) {
+            stencil_attachment = &depth_attachment;
+        }
         command_encoder.start_rendering(
             VkRect2D {
                 .offset = VkOffset2D {0, 0},
@@ -342,19 +431,28 @@ namespace Posideon {
                     .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                    .clearValue = {VkClearColorValue { 0.0f, 0.2f, 0.4f, 1.0f }}
+                    .clearValue = {.color = VkClearColorValue { 0.0f, 0.0f, 0.0f, 1.0f }}
                 }
-            }
+            },
+            &depth_attachment,
+            stencil_attachment
         );
 
         command_encoder.set_viewport(width, height);
         command_encoder.set_scissor(width, height);
 
-        command_encoder.bind_pipeline(pipeline);
+        command_encoder.bind_pipeline(mesh_pipeline.pipeline);
         for (size_t i = 0; i < meshes.size(); i++) {
-            command_encoder.bind_descriptor_set(pipeline_layout, { descriptor_set }, { static_cast<uint32_t>(i * sizeof(glm::mat4)) });
-            command_encoder.bind_vertex_buffer(meshes[i].vertex_buffer.buffer, 0);
-            command_encoder.draw(meshes[i].vertex_count);
+            command_encoder.bind_descriptor_set(mesh_pipeline.pipeline_layout, 0, { mesh_pipeline.model_set }, { static_cast<uint32_t>(i * sizeof(glm::mat4)) });
+            command_encoder.bind_descriptor_set(mesh_pipeline.pipeline_layout, 1, { mesh_pipeline.view_set }, {});
+            if (meshes[i].index_buffer.has_value()) {
+                command_encoder.bind_index_buffer(meshes[i].index_buffer.value().buffer);
+                command_encoder.bind_vertex_buffer(meshes[i].vertex_buffer.buffer, 0);
+                command_encoder.draw_indexed(meshes[i].index_count);
+            } else {
+                command_encoder.bind_vertex_buffer(meshes[i].vertex_buffer.buffer, 0);
+                command_encoder.draw(meshes[i].vertex_count);
+            }
         }
 
         command_encoder.end_rendering();
@@ -363,7 +461,8 @@ namespace Posideon {
             .old_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .new_layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             .src_stage_mask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .dst_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT
+            .dst_stage_mask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT,
         });
 
         VkCommandBuffer command_buffer = command_encoder.finish();
@@ -399,23 +498,24 @@ namespace Posideon {
             VkDescriptorPoolSize {
                 .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
                 .descriptorCount = 1
+            },
+            VkDescriptorPoolSize {
+                .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 10
             }
         });
-        descriptor_set_layout = device.create_descriptor_set_layout({
-            VkDescriptorSetLayoutBinding {
-                .binding = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-                .descriptorCount = 1,
-                .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
-            }
-        });
-        descriptor_set = device.allocate_descriptor_sets(descriptor_pool, { descriptor_set_layout })[0];
     }
 
     void ForwardRenderer::add_gpu_mesh(Mesh& mesh) {
+        std::optional<VulkanBuffer> index_buffer;
+        if (!mesh.indices.empty()) {
+            index_buffer = device.create_buffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, mesh.indices.size(), mesh.indices.data());
+        }
         GPUMesh gpu_mesh {
             .vertex_buffer = device.create_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mesh.vertices.size(), mesh.vertices.data()),
-            .vertex_count = static_cast<uint32_t>(mesh.vertices.size())
+            .index_buffer = index_buffer,
+            .vertex_count = static_cast<uint32_t>(mesh.vertices.size()),
+            .index_count = static_cast<uint32_t>(mesh.indices.size()),
         };
         meshes.emplace_back(gpu_mesh);
     }

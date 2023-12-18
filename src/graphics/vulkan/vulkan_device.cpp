@@ -73,13 +73,6 @@ namespace Posideon {
         return swapchain;
     }
 
-    VkImageView VulkanDevice::create_image_view(const VkImageViewCreateInfo&create_info) const {
-        VkImageView image_view;
-        const VkResult res = vkCreateImageView(m_device, &create_info, nullptr, &image_view);
-        POSIDEON_ASSERT(res == VK_SUCCESS)
-        return image_view;
-    }
-
     VkCommandPool VulkanDevice::create_command_pool() const {
         const VkCommandPoolCreateInfo create_info {
             .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -152,9 +145,28 @@ namespace Posideon {
         VkPipelineRasterizationStateCreateInfo rasterization{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
             .polygonMode = VK_POLYGON_MODE_FILL,
-            .cullMode = VK_CULL_MODE_BACK_BIT,
+            .cullMode = VK_CULL_MODE_NONE,
             .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
             .lineWidth = 1.0f
+        };
+
+        VkPipelineDepthStencilStateCreateInfo depth_stencil {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            .depthTestEnable = VK_TRUE,
+            .depthWriteEnable = VK_TRUE,
+            .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+            .depthBoundsTestEnable = VK_FALSE,
+            .stencilTestEnable = VK_FALSE,
+            .front = VkStencilOpState {
+                    .failOp = VK_STENCIL_OP_KEEP,
+                    .passOp = VK_STENCIL_OP_KEEP,
+                    .compareOp = VK_COMPARE_OP_ALWAYS
+            },
+            .back = VkStencilOpState {
+                .failOp = VK_STENCIL_OP_KEEP,
+                .passOp = VK_STENCIL_OP_KEEP,
+                .compareOp = VK_COMPARE_OP_ALWAYS
+            },
         };
 
         VkPipelineColorBlendAttachmentState blend_attachment{
@@ -189,7 +201,9 @@ namespace Posideon {
         VkPipelineRenderingCreateInfo pipeline_rendering{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
             .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &descriptor.swapchain_format
+            .pColorAttachmentFormats = &descriptor.swapchain_format,
+            .depthAttachmentFormat = descriptor.depth_format,
+            .stencilAttachmentFormat = descriptor.stencil_format,
         };
 
         VkGraphicsPipelineCreateInfo pipeline_info{
@@ -202,6 +216,7 @@ namespace Posideon {
             .pViewportState = &viewport_state,
             .pRasterizationState = &rasterization,
             .pMultisampleState = &multisampling,
+            .pDepthStencilState = &depth_stencil,
             .pColorBlendState = &color_blend_state,
             .pDynamicState = &dynamic_state,
             .layout = descriptor.layout,
@@ -254,7 +269,7 @@ namespace Posideon {
     VkDescriptorPool VulkanDevice::create_descriptor_pool(const std::vector<VkDescriptorPoolSize> &pool_sizes) const {
         const VkDescriptorPoolCreateInfo create_info {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-            .maxSets = 1,
+            .maxSets = 100,
             .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
             .pPoolSizes = pool_sizes.data()
         };
@@ -276,12 +291,72 @@ namespace Posideon {
         return layout;
     }
 
+    VulkanImage VulkanDevice::create_image(const ImageDescriptor &descriptor) const {
+        VkImageCreateInfo create_info {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = descriptor.image_type,
+            .format = descriptor.format,
+            .extent = VkExtent3D {
+                .width = descriptor.width,
+                .height = descriptor.height,
+                .depth = 1,
+            },
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = descriptor.usage,
+            .initialLayout = descriptor.initial_layout,
+        };
+        VkImage image;
+        VkResult res = vkCreateImage(m_device, &create_info, nullptr, &image);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+
+        VkMemoryRequirements memory_requirements;
+        vkGetImageMemoryRequirements(m_device, image, &memory_requirements);
+
+        VkMemoryAllocateInfo alloc_info {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memory_requirements.size,
+            .memoryTypeIndex = get_memory_type_index(memory_requirements.memoryTypeBits, descriptor.memory_flags).value()
+        };
+        VkDeviceMemory memory;
+        res = vkAllocateMemory(m_device, &alloc_info, nullptr, &memory);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+
+        res = vkBindImageMemory(m_device, image, memory, 0);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+
+        return { image, memory };
+    }
+
+    VkImageView VulkanDevice::create_image_view(VkImage image, const ImageViewDescriptor &descriptor) const {
+        VkImageViewCreateInfo create_info {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image,
+            .viewType = descriptor.image_view_type,
+            .format = descriptor.format,
+            .subresourceRange = {
+                .aspectMask = descriptor.aspect_mask,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            }
+        };
+        VkImageView image_view;
+        VkResult res = vkCreateImageView(m_device, &create_info, nullptr, &image_view);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+
+        return image_view;
+    }
+
     std::vector<VkDescriptorSet> VulkanDevice::allocate_descriptor_sets(VkDescriptorPool descriptor_pool, const std::vector<VkDescriptorSetLayout> &descriptor_layouts) const {
         VkDescriptorSetAllocateInfo alloc_info {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
             .descriptorPool = descriptor_pool,
             .descriptorSetCount = static_cast<uint32_t>(descriptor_layouts.size()),
-            .pSetLayouts = descriptor_layouts.data()
+            .pSetLayouts = descriptor_layouts.data(),
         };
         std::vector<VkDescriptorSet> descriptor_sets(descriptor_layouts.size());
         VkResult res = vkAllocateDescriptorSets(m_device, &alloc_info, descriptor_sets.data());

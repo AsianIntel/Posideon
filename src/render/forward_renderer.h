@@ -8,6 +8,7 @@
 #include "graphics/vulkan/vulkan_instance.h"
 #include "graphics/vulkan/vulkan_device.h"
 #include "scene/mesh.h"
+#include "scene/camera.h"
 
 namespace Posideon {
     struct Vertex {
@@ -17,6 +18,15 @@ namespace Posideon {
 
     struct Transform {
         glm::mat4 model;
+    };
+
+    struct MeshPipeline {
+        VkDescriptorSetLayout model_descriptor_layout;
+        VkDescriptorSet model_set;
+        VkDescriptorSetLayout view_descriptor_layout;
+        VkDescriptorSet view_set;
+        VkPipelineLayout pipeline_layout;
+        VkPipeline pipeline;
     };
 
     struct ForwardRenderer {
@@ -33,24 +43,30 @@ namespace Posideon {
         VkSemaphore image_available_semaphore = VK_NULL_HANDLE;
         VkSemaphore rendering_finished_semaphore = VK_NULL_HANDLE;
         VkFence fence;
-        VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
-        VkPipeline pipeline = VK_NULL_HANDLE;
         VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
-        VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
-        VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
 
         VkFormat swapchain_format;
+        VkFormat depth_format;
+        VulkanImage depth_image;
+        VkImageView depth_image_view;
+
+        MeshPipeline mesh_pipeline;
 
         uint32_t width;
         uint32_t height;
         bool vsync;
 
-        flecs::query<Mesh, Transform> query;
+        flecs::query<Mesh, Transform> mesh_query;
+        flecs::query<Camera, Transform> view_query;
         struct {
             VulkanBuffer buffer;
             void* mapped;
             size_t capacity = 0;
         } transform_dynamic;
+        struct {
+            VulkanBuffer buffer;
+            void* mapped;
+        } view_buffer;
         std::vector<GPUMesh> meshes;
 
         void create_swapchain();

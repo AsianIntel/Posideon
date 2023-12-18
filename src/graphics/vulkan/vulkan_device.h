@@ -10,12 +10,35 @@ namespace Posideon {
         VkDeviceMemory memory = VK_NULL_HANDLE;
     };
 
+    struct VulkanImage {
+        VkImage image = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+    };
+
     struct PipelineDescriptor {
         uint32_t vertex_stride;
         std::vector<VkVertexInputAttributeDescription> vertex_input_attributes;
         std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
         VkPipelineLayout layout;
         VkFormat swapchain_format;
+        VkFormat depth_format;
+        VkFormat stencil_format;
+    };
+
+    struct ImageDescriptor {
+        VkImageType image_type;
+        VkFormat format;
+        uint32_t width;
+        uint32_t height;
+        VkImageUsageFlags usage;
+        VkImageLayout initial_layout;
+        VkMemoryPropertyFlags memory_flags;
+    };
+
+    struct ImageViewDescriptor {
+        VkImageViewType image_view_type;
+        VkFormat format;
+        VkImageAspectFlags aspect_mask;
     };
 
     struct VulkanPhysicalDevice {
@@ -33,7 +56,7 @@ namespace Posideon {
         VkDevice m_device;
 
     private:
-        std::optional<uint32_t> get_memory_type_index(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
+        [[nodiscard]] std::optional<uint32_t> get_memory_type_index(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
     public:
         VulkanDevice(VulkanPhysicalDevice const& physical_device, VkDevice device): m_physicalDevice(physical_device), m_device(device) {}
@@ -46,7 +69,6 @@ namespace Posideon {
 
         [[nodiscard]] std::vector<VkCommandBuffer> allocate_command_buffers(VkCommandPool command_pool, uint32_t buffer_count) const;
         [[nodiscard]] VkSwapchainKHR create_swapchain(const VkSwapchainCreateInfoKHR& create_info) const;
-        [[nodiscard]] VkImageView create_image_view(const VkImageViewCreateInfo& create_info) const;
         [[nodiscard]] VkCommandPool create_command_pool() const;
         [[nodiscard]] VkSemaphore create_semaphore() const;
         [[nodiscard]] VkFence create_fence(bool signaled) const;
@@ -55,6 +77,8 @@ namespace Posideon {
         [[nodiscard]] VkShaderModule create_shader_module(const std::vector<char>& code) const;
         [[nodiscard]] VkDescriptorPool create_descriptor_pool(const std::vector<VkDescriptorPoolSize>& pool_sizes) const;
         [[nodiscard]] VkDescriptorSetLayout create_descriptor_set_layout(const std::vector<VkDescriptorSetLayoutBinding>& bindings) const;
+        [[nodiscard]] VulkanImage create_image(const ImageDescriptor& descriptor) const;
+        [[nodiscard]] VkImageView create_image_view(VkImage image, const ImageViewDescriptor& descriptor) const;
 
         uint32_t acquire_next_image(VkSwapchainKHR swapchain, VkSemaphore semaphore) const;
         VkResult wait_for_fence(VkFence fence);
