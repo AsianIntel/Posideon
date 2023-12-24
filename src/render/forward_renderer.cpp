@@ -118,8 +118,8 @@ namespace Posideon {
         VkSemaphore rendering_finished_semaphore = vulkan_device.create_semaphore();
         VkFence fence = vulkan_device.create_fence(true);
 
-        VkShaderModule vertex_shader = vulkan_device.create_shader_module(readFile("../assets/shaders/shader.vert.spv"));
-        VkShaderModule fragment_shader = vulkan_device.create_shader_module(readFile("../assets/shaders/shader.frag.spv"));
+        VkShaderModule vertex_shader = vulkan_device.create_shader_module(readFile("../../../assets/shaders/shader.vert.spv"));
+        VkShaderModule fragment_shader = vulkan_device.create_shader_module(readFile("../../../assets/shaders/shader.frag.spv"));
 
         flecs::query<Mesh, Transform> mesh_query = world.query<Mesh, Transform>();
         flecs::query<Camera, Transform> view_query = world.query<Camera, Transform>();
