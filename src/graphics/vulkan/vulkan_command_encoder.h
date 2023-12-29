@@ -18,11 +18,13 @@ namespace Posideon {
         void bind_pipeline(VkPipelineBindPoint bind_point, VkPipeline pipeline) const;
         void bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout pipeline_layout, uint32_t set, const std::vector<VkDescriptorSet>& sets, const std::vector<uint32_t>& dynamic_offsets) const;
         void bind_vertex_buffer(VkBuffer buffer, VkDeviceSize offset) const;
-        void bind_index_buffer(VkBuffer buffer) const;
+        void bind_index_buffer(VkBuffer buffer, VkIndexType index_type) const;
+        void copy_buffer_to_buffer(VkBuffer source, VkBuffer destination, size_t size, uint32_t src_offset, uint32_t dst_offset) const;
         void copy_image_to_image(VkImage source, VkImage destination, VkExtent2D src_size, VkExtent2D dst_size) const;
         void draw(uint32_t vertex_count) const;
         void draw_indexed(uint32_t index_count) const;
         void dispatch(uint32_t x, uint32_t y) const;
+        void push_constants(VkPipelineLayout pipeline_layout, VkShaderStageFlags stage, uint32_t size, const void* values) const;
         void end_rendering() const;
         [[nodiscard]] VkCommandBuffer finish() const;
     };

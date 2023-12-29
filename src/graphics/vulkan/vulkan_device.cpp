@@ -52,6 +52,15 @@ namespace Posideon {
         return images;
     }
 
+    VkDeviceAddress VulkanDevice::get_buffer_address(const VulkanBuffer& buffer) const {
+        const VkBufferDeviceAddressInfo device_address_info {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+            .buffer = buffer.buffer
+        };
+        const VkDeviceAddress address = vkGetBufferDeviceAddress(m_device, &device_address_info);
+        return address;
+    }
+
     std::vector<VkCommandBuffer> VulkanDevice::allocate_command_buffers(VkCommandPool command_pool, uint32_t buffer_count) const {
         VkCommandBufferAllocateInfo command_buffer_allocate_info {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -108,11 +117,13 @@ namespace Posideon {
         return fence;
     }
 
-    VkPipelineLayout VulkanDevice::create_pipeline_layout(const std::vector<VkDescriptorSetLayout>& set_layouts) const {
+    VkPipelineLayout VulkanDevice::create_pipeline_layout(const std::vector<VkDescriptorSetLayout>& set_layouts, const std::vector<VkPushConstantRange>& push_constants) const {
         const VkPipelineLayoutCreateInfo create_info{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .setLayoutCount = static_cast<uint32_t>(set_layouts.size()),
-            .pSetLayouts = set_layouts.data()
+            .pSetLayouts = set_layouts.data(),
+            .pushConstantRangeCount = static_cast<uint32_t>(push_constants.size()),
+            .pPushConstantRanges = push_constants.data()
         };
 
         VkPipelineLayout pipeline_layout;
@@ -263,6 +274,27 @@ namespace Posideon {
         return image_view;
     }
 
+    VulkanBuffer VulkanDevice::create_buffer(size_t alloc_size, VkBufferUsageFlags usage, VmaMemoryUsage memory_usage) const {
+        VkBufferCreateInfo create_info {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = alloc_size,
+            .usage = usage
+        };
+
+        VmaAllocationCreateInfo alloc_info {
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
+            .usage = memory_usage,
+        };
+
+        VkBuffer buffer;
+        VmaAllocation allocation;
+        VmaAllocationInfo allocation_info;
+        const VkResult res = vmaCreateBuffer(m_allocator, &create_info, &alloc_info, &buffer, &allocation, &allocation_info);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+
+        return { buffer, allocation, allocation_info };
+    }
+    
     std::vector<VkDescriptorSet> VulkanDevice::allocate_descriptor_sets(VkDescriptorPool descriptor_pool, const std::vector<VkDescriptorSetLayout> &descriptor_layouts) const {
         VkDescriptorSetAllocateInfo alloc_info {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -290,16 +322,15 @@ namespace Posideon {
     }
 
     void VulkanDevice::map_memory(VulkanBuffer buffer, VkDeviceSize size, void** data) const {
-        vkMapMemory(m_device, buffer.memory, 0, size, 0, data);
+        //vkMapMemory(m_device, buffer.memory, 0, size, 0, data);
     }
 
     void VulkanDevice::unmap_memory(VulkanBuffer buffer) const {
-        vkUnmapMemory(m_device, buffer.memory);
+        //vkUnmapMemory(m_device, buffer.memory);
     }
 
     void VulkanDevice::destroy_buffer(VulkanBuffer buffer) const {
-        vkFreeMemory(m_device, buffer.memory, nullptr);
-        vkDestroyBuffer(m_device, buffer.buffer, nullptr);
+        vmaDestroyBuffer(m_allocator, buffer.buffer, buffer.allocation);
     }
 
     void VulkanDevice::reset_descriptor_pool(VkDescriptorPool pool) const {

@@ -105,6 +105,7 @@ namespace Posideon {
         renderer.create_command_structures();
         renderer.create_descriptors();
         renderer.create_pipelines();
+        renderer.init_default_data();
 
         return renderer;
     }
@@ -166,6 +167,9 @@ namespace Posideon {
             frame.command_pool = device.create_command_pool();
             frame.command_buffer = device.allocate_command_buffers(frame.command_pool, 1)[0];
         }
+
+        immediate_command_pool = device.create_command_pool();
+        immediate_command_buffer = device.allocate_command_buffers(immediate_command_pool, 1)[0];
     }
 
     void Renderer::create_sync_structures() {
@@ -174,6 +178,8 @@ namespace Posideon {
             frame.render_semaphore = device.create_semaphore();
             frame.swapchain_semaphore = device.create_semaphore();
         }
+
+        immediate_fence = device.create_fence(false);
     }
 
     void Renderer::create_descriptors() {
@@ -201,10 +207,11 @@ namespace Posideon {
     void Renderer::create_pipelines() {
         create_background_pipelines();
         create_triangle_pipeline();
+        create_mesh_pipeline();
     }
 
     void Renderer::create_background_pipelines() {
-        gradient_layout = device.create_pipeline_layout({ draw_image_set_layout });
+        gradient_layout = device.create_pipeline_layout({ draw_image_set_layout }, {});
 
         const std::vector<char> gradient_shader_code = readFile("../assets/shaders/gradient.comp.spv");
         const VkShaderModule gradient_shader = device.create_shader_module(gradient_shader_code);
@@ -228,7 +235,7 @@ namespace Posideon {
         const std::vector<char> fragment_shader_code = readFile("../assets/shaders/shader.frag.spv");
         const VkShaderModule fragment_shader = device.create_shader_module(fragment_shader_code);
 
-        triangle_pipeline_layout = device.create_pipeline_layout({});
+        triangle_pipeline_layout = device.create_pipeline_layout({}, {});
         GraphicsPipelineBuilder pipeline_builder;
         pipeline_builder.pipeline_layout = triangle_pipeline_layout;
         pipeline_builder.set_shaders(vertex_shader, fragment_shader);
@@ -241,6 +248,93 @@ namespace Posideon {
         pipeline_builder.set_color_attachment_format(draw_image.format);
         pipeline_builder.set_depth_format(VK_FORMAT_UNDEFINED);
         triangle_pipeline = device.create_graphics_pipeline(pipeline_builder.build());
+    }
+
+    void Renderer::create_mesh_pipeline() {
+        const std::vector<char> vertex_shader_code = readFile("../assets/shaders/mesh.vert.spv");
+        const VkShaderModule vertex_shader = device.create_shader_module(vertex_shader_code);
+
+        const std::vector<char> fragment_shader_code = readFile("../assets/shaders/shader.frag.spv");
+        const VkShaderModule fragment_shader = device.create_shader_module(fragment_shader_code);
+
+        VkPushConstantRange buffer_range {
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+            .offset = 0,
+            .size = sizeof(GPUDrawPushConstants),
+        };
+
+        mesh_pipeline_layout = device.create_pipeline_layout({}, { buffer_range });
+        GraphicsPipelineBuilder pipeline_builder;
+        pipeline_builder.pipeline_layout = mesh_pipeline_layout;
+        pipeline_builder.set_shaders(vertex_shader, fragment_shader);
+        pipeline_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        pipeline_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+        pipeline_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
+        pipeline_builder.set_multisampling_none();
+        pipeline_builder.disable_blending();
+        pipeline_builder.disable_depth_test();
+        pipeline_builder.set_color_attachment_format(draw_image.format);
+        pipeline_builder.set_depth_format(VK_FORMAT_UNDEFINED);
+        mesh_pipeline = device.create_graphics_pipeline(pipeline_builder.build());
+    }
+
+    GPUMeshBuffers Renderer::create_mesh(const std::vector<uint32_t>& indices, const std::vector<Vertex>& vertices) {
+        const size_t vertex_buffer_size = vertices.size() * sizeof(Vertex);
+        const size_t index_buffer_size = indices.size() * sizeof(uint32_t);
+
+        GPUMeshBuffers upload_mesh;
+        upload_mesh.vertex_buffer = device.create_buffer(
+            vertex_buffer_size,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            VMA_MEMORY_USAGE_GPU_ONLY
+        );
+        upload_mesh.vertex_buffer_address = device.get_buffer_address(upload_mesh.vertex_buffer);
+        upload_mesh.index_buffer = device.create_buffer(
+            index_buffer_size,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VMA_MEMORY_USAGE_GPU_ONLY
+        );
+
+        VulkanBuffer staging = device.create_buffer(
+            vertex_buffer_size + index_buffer_size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VMA_MEMORY_USAGE_CPU_ONLY
+        );
+        void* data = staging.allocation->GetMappedData();
+        memcpy(data, vertices.data(), vertex_buffer_size);
+        memcpy(static_cast<char*>(data) + vertex_buffer_size, indices.data(), index_buffer_size);
+
+        immediate_submit([&](VulkanCommandEncoder encoder) {
+            encoder.copy_buffer_to_buffer(staging.buffer, upload_mesh.vertex_buffer.buffer, vertex_buffer_size, 0, 0);
+            encoder.copy_buffer_to_buffer(staging.buffer, upload_mesh.index_buffer.buffer, index_buffer_size, vertex_buffer_size, 0);
+        });
+
+        return upload_mesh;
+    }
+
+    void Renderer::init_default_data() {
+        std::vector<Vertex> rect_vertices(4);
+
+        rect_vertices[0].position = {0.5,-0.5, 0};
+        rect_vertices[1].position = {0.5,0.5, 0};
+        rect_vertices[2].position = {-0.5,-0.5, 0};
+        rect_vertices[3].position = {-0.5,0.5, 0};
+
+        rect_vertices[0].color = {0,0, 0,1};
+        rect_vertices[1].color = { 0.5,0.5,0.5 ,1};
+        rect_vertices[2].color = { 1,0, 0,1 };
+        rect_vertices[3].color = { 0,1, 0,1 };
+
+        std::vector<uint32_t> rect_indices(6);
+        rect_indices[0] = 0;
+        rect_indices[1] = 1;
+        rect_indices[2] = 2;
+
+        rect_indices[3] = 2;
+        rect_indices[4] = 1;
+        rect_indices[5] = 3;
+
+        rectangle = create_mesh(rect_indices, rect_vertices);
     }
     
     void Renderer::render() {
@@ -339,7 +433,44 @@ namespace Posideon {
         encoder.set_scissor(draw_image.extent.width, draw_image.extent.height);
 
         encoder.draw(3);
+
+        encoder.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline);
+
+        GPUDrawPushConstants push_constants {
+            .world_matrix = glm::mat4(1.0f),
+            .vertex_buffer = rectangle.vertex_buffer_address
+        };
+        encoder.push_constants(mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(GPUDrawPushConstants), &push_constants);
+        encoder.bind_index_buffer(rectangle.index_buffer.buffer, VK_INDEX_TYPE_UINT32);
+        encoder.draw_indexed(6);
+        
         encoder.end_rendering();
+    }
+
+    void Renderer::immediate_submit(std::function<void(VulkanCommandEncoder encoder)>&& function) {
+        device.reset_fence(immediate_fence);
+        VulkanCommandEncoder encoder(immediate_command_buffer);
+        encoder.reset();
+        encoder.begin();
+
+        function(encoder);
+
+        VkCommandBuffer buffer = encoder.finish();
+        VkCommandBufferSubmitInfo buffer_submit_info {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = buffer,
+            .deviceMask = 0
+        };
+        VkSubmitInfo2 submit_info {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .commandBufferInfoCount = 1,
+            .pCommandBufferInfos = &buffer_submit_info
+        };
+        VkResult res = vkQueueSubmit2(queue, 1, &submit_info, immediate_fence);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+
+        res = device.wait_for_fence(immediate_fence);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
     }
 
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface) {

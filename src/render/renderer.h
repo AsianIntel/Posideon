@@ -3,7 +3,9 @@
 #include "defines.h"
 
 #include <cstdint>
+#include <functional>
 #include <vulkan/vulkan.hpp>
+#include <glm/glm.hpp>
 
 #include "graphics/vulkan/vulkan_device.h"
 #include "graphics/vulkan/vulkan_command_encoder.h"
@@ -11,6 +13,25 @@
 
 namespace Posideon {
     static constexpr uint32_t FRAME_OVERLAP = 2;
+
+    struct Vertex {
+        glm::vec3 position;
+        float uv_x;
+        glm::vec3 normal;
+        float uv_y;
+        glm::vec4 color;
+    };
+
+    struct GPUMeshBuffers {
+        VulkanBuffer index_buffer;
+        VulkanBuffer vertex_buffer;
+        VkDeviceAddress vertex_buffer_address;
+    };
+
+    struct GPUDrawPushConstants {
+        glm::mat4 world_matrix;
+        VkDeviceAddress vertex_buffer;
+    };
 
     struct FrameData {
         VkCommandPool command_pool;
@@ -33,6 +54,9 @@ namespace Posideon {
         std::vector<VkImage> swapchain_images;
         std::vector<VkImageView> swapchain_image_views;
         VkExtent2D swapchain_extent;
+        VkFence immediate_fence;
+        VkCommandPool immediate_command_pool;
+        VkCommandBuffer immediate_command_buffer;
 
         DescriptorAllocator global_descriptor_allocator;
 
@@ -46,8 +70,13 @@ namespace Posideon {
         VkPipelineLayout triangle_pipeline_layout;
         VkPipeline triangle_pipeline;
 
+        VkPipelineLayout mesh_pipeline_layout;
+        VkPipeline mesh_pipeline;
+
         FrameData frames[FRAME_OVERLAP];
         size_t frame_number;
+
+        GPUMeshBuffers rectangle;
 
         void create_swapchain();
         void create_command_structures();
@@ -56,11 +85,15 @@ namespace Posideon {
         void create_pipelines();
         void create_background_pipelines();
         void create_triangle_pipeline();
+        void create_mesh_pipeline();
+        GPUMeshBuffers create_mesh(const std::vector<uint32_t>& indices, const std::vector<Vertex>& vertices);
+        void init_default_data();
 
+        void immediate_submit(std::function<void(VulkanCommandEncoder encoder)>&& function);
         void render();
         void draw_background(const VulkanCommandEncoder& encoder) const;
         void draw_geometry(const VulkanCommandEncoder& encoder) const;
-
+        
         FrameData& get_current_frame() { return frames[frame_number % FRAME_OVERLAP]; }
     };
 

@@ -93,8 +93,17 @@ namespace Posideon {
         vkCmdBindVertexBuffers(m_buffer, 0, 1, &buffer, &offset);
     }
 
-    void VulkanCommandEncoder::bind_index_buffer(VkBuffer buffer) const {
-        vkCmdBindIndexBuffer(m_buffer, buffer, 0, VK_INDEX_TYPE_UINT16);
+    void VulkanCommandEncoder::bind_index_buffer(VkBuffer buffer, VkIndexType index_type) const {
+        vkCmdBindIndexBuffer(m_buffer, buffer, 0, index_type);
+    }
+
+    void VulkanCommandEncoder::copy_buffer_to_buffer(VkBuffer source, VkBuffer destination, size_t size, uint32_t src_offset, uint32_t dst_offset) const {
+        VkBufferCopy copy {
+            .srcOffset = src_offset,
+            .dstOffset = dst_offset,
+            .size = size 
+        };
+        vkCmdCopyBuffer(m_buffer, source, destination, 1, &copy);
     }
 
     void VulkanCommandEncoder::copy_image_to_image(VkImage source, VkImage destination, VkExtent2D src_size, VkExtent2D dst_size) const {
@@ -143,6 +152,10 @@ namespace Posideon {
 
     void VulkanCommandEncoder::dispatch(uint32_t x, uint32_t y) const {
         vkCmdDispatch(m_buffer, x, y, 1);    
+    }
+
+    void VulkanCommandEncoder::push_constants(VkPipelineLayout pipeline_layout, VkShaderStageFlags stage, uint32_t size, const void* values) const {
+        vkCmdPushConstants(m_buffer, pipeline_layout, stage, 0, size, values);   
     }
     
     void VulkanCommandEncoder::end_rendering() const {
