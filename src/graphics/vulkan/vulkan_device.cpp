@@ -122,7 +122,7 @@ namespace Posideon {
         return pipeline_layout;
     }
 
-    VkPipeline VulkanDevice::create_pipeline(const PipelineDescriptor& descriptor) const {
+    VkPipeline VulkanDevice::create_graphics_pipeline(const GraphicsPipelineDescriptor& descriptor) const {
         VkVertexInputBindingDescription vertex_input_binding{
             .binding = 0,
             .stride = descriptor.vertex_stride,
@@ -229,6 +229,20 @@ namespace Posideon {
         return pipeline;
     }
 
+    VkPipeline VulkanDevice::create_compute_pipeline(const ComputePipelineDescriptor& descriptor) const {
+        const VkComputePipelineCreateInfo pipeline_create_info {
+            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .stage = descriptor.shader_stage,
+            .layout = descriptor.layout,
+        };
+
+        VkPipeline pipeline;
+        const VkResult res = vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &pipeline_create_info, nullptr, &pipeline);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+
+        return pipeline;
+    }
+
     VkShaderModule VulkanDevice::create_shader_module(const std::vector<char>& code) const {
         VkShaderModuleCreateInfo create_info{
                 .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -292,7 +306,7 @@ namespace Posideon {
     }
 
     VulkanImage VulkanDevice::create_image(const ImageDescriptor &descriptor) const {
-        VkImageCreateInfo create_info {
+        const VkImageCreateInfo create_info {
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .imageType = descriptor.image_type,
             .format = descriptor.format,
@@ -308,26 +322,23 @@ namespace Posideon {
             .usage = descriptor.usage,
             .initialLayout = descriptor.initial_layout,
         };
-        VkImage image;
-        VkResult res = vkCreateImage(m_device, &create_info, nullptr, &image);
-        POSIDEON_ASSERT(res == VK_SUCCESS)
 
-        VkMemoryRequirements memory_requirements;
-        vkGetImageMemoryRequirements(m_device, image, &memory_requirements);
-
-        VkMemoryAllocateInfo alloc_info {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .allocationSize = memory_requirements.size,
-            .memoryTypeIndex = get_memory_type_index(memory_requirements.memoryTypeBits, descriptor.memory_flags).value()
+        constexpr VmaAllocationCreateInfo image_allocation_info {
+            .usage = VMA_MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
         };
-        VkDeviceMemory memory;
-        res = vkAllocateMemory(m_device, &alloc_info, nullptr, &memory);
-        POSIDEON_ASSERT(res == VK_SUCCESS)
 
-        res = vkBindImageMemory(m_device, image, memory, 0);
-        POSIDEON_ASSERT(res == VK_SUCCESS)
+        VkImage image;
+        VmaAllocation allocation;
+        vmaCreateImage(m_allocator, &create_info, &image_allocation_info, &image, &allocation, nullptr);
 
-        return { image, memory };
+        VkImageView image_view = create_image_view(image, {
+            .image_view_type = descriptor.image_view_type,
+            .format = descriptor.format,
+            .aspect_mask = descriptor.aspect_mask
+        });
+
+        return { image, image_view, allocation, create_info.extent, descriptor.format };
     }
 
     VkImageView VulkanDevice::create_image_view(VkImage image, const ImageViewDescriptor &descriptor) const {
@@ -364,13 +375,15 @@ namespace Posideon {
         return descriptor_sets;
     }
 
-    void VulkanDevice::update_descriptor_sets(VkDescriptorSet set, VkDescriptorType descriptor_type, uint32_t binding, VkDescriptorBufferInfo* buffer_info) const {
-        VkWriteDescriptorSet write_info {
+    void VulkanDevice::update_descriptor_sets(VkDescriptorSet set, VkDescriptorType descriptor_type, uint32_t binding, VkDescriptorBufferInfo* buffer_info, VkDescriptorImageInfo* image_info) const {
+        const VkWriteDescriptorSet write_info {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstSet = set,
+            .dstBinding = binding,
             .descriptorCount = 1,
             .descriptorType = descriptor_type,
-            .pBufferInfo = buffer_info
+            .pImageInfo = image_info,
+            .pBufferInfo = buffer_info,
         };
         vkUpdateDescriptorSets(m_device, 1, &write_info, 0, nullptr);
     }
@@ -386,5 +399,37 @@ namespace Posideon {
     void VulkanDevice::destroy_buffer(VulkanBuffer buffer) const {
         vkFreeMemory(m_device, buffer.memory, nullptr);
         vkDestroyBuffer(m_device, buffer.buffer, nullptr);
+    }
+
+    void VulkanDevice::reset_descriptor_pool(VkDescriptorPool pool) const {
+        vkResetDescriptorPool(m_device, pool, 0);   
+    }
+
+    void VulkanDevice::destroy_descriptor_pool(VkDescriptorPool pool) const {
+        vkResetDescriptorPool(m_device, pool, 0);   
+    }
+
+    void DescriptorAllocator::init_pool(const VulkanDevice& device, uint32_t max_sets, const std::vector<PoolSizeRatio>& pool_ratios) {
+        std::vector<VkDescriptorPoolSize> pool_sizes;
+        for (const PoolSizeRatio& ratio: pool_ratios) {
+            pool_sizes.emplace_back(VkDescriptorPoolSize {
+                .type = ratio.type,
+                .descriptorCount = static_cast<uint32_t>(ratio.ratio * max_sets)
+            });
+        }
+
+        pool = device.create_descriptor_pool(pool_sizes);
+    }
+
+    void DescriptorAllocator::clear_descriptors(const VulkanDevice& device) const {
+        device.reset_descriptor_pool(pool);
+    }
+
+    void DescriptorAllocator::destroy_pool(const VulkanDevice& device) const {
+        device.destroy_descriptor_pool(pool);
+    }
+
+    VkDescriptorSet DescriptorAllocator::allocate(const VulkanDevice& device, VkDescriptorSetLayout layout) const {
+        return device.allocate_descriptor_sets(pool, { layout })[0];   
     }
 }

@@ -1,10 +1,15 @@
 #include "renderer.h"
 
+#define VMA_IMPLEMENTATION
+#include <vk_mem_alloc.h>
+#include <fstream>
+
 #include "graphics/vulkan/vulkan_command_encoder.h"
 #include "graphics/vulkan/vulkan_instance.h"
 
 namespace Posideon {
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface);
+    std::vector<char> readFile(const std::string& filename);
 
     Renderer init_renderer(uint32_t width, uint32_t height, Win32Window* window) {
         VkInstance instance = init_vulkan_instance();
@@ -70,13 +75,24 @@ namespace Posideon {
         res = vkCreateDevice(physical_device.raw, &device_create_info, nullptr, &device);
         POSIDEON_ASSERT(res == VK_SUCCESS)
 
-        const VulkanDevice vulkan_device(physical_device, device);
+        VmaAllocatorCreateInfo allocator_create_info {
+            .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+            .physicalDevice = physical_device.raw,
+            .device = device,
+            .instance = instance,
+        };
+        VmaAllocator allocator;
+        res = vmaCreateAllocator(&allocator_create_info, &allocator);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
+
+        const VulkanDevice vulkan_device(physical_device, device, allocator);
         VkQueue graphics_queue = vulkan_device.get_queue();
 
         Renderer renderer {
             .width = width,
             .height = height,
             .instance = instance,
+            .debug_messenger = debug_messenger,
             .surface = surface,
             .physical_device = physical_device,
             .device = vulkan_device,
@@ -86,6 +102,8 @@ namespace Posideon {
         renderer.create_swapchain();
         renderer.create_sync_structures();
         renderer.create_command_structures();
+        renderer.create_descriptors();
+        renderer.create_pipelines();
 
         return renderer;
     }
@@ -93,14 +111,14 @@ namespace Posideon {
     void Renderer::create_swapchain() {
         const VkSurfaceCapabilitiesKHR surface_capabilities = device.get_physical_device_surface_capabilities(surface);
 
-        uint32_t swapchain_image_count = surface_capabilities.minImageCount + 1;
-        VkFormat swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
-        VkColorSpaceKHR color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-        VkExtent2D swapchain_extent = surface_capabilities.currentExtent;
-        VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
-        VkImageUsageFlags image_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        const uint32_t swapchain_image_count = surface_capabilities.minImageCount + 1;
+        constexpr VkFormat swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
+        constexpr VkColorSpaceKHR color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+        swapchain_extent = surface_capabilities.currentExtent;
+        constexpr VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+        constexpr VkImageUsageFlags image_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-        VkSwapchainCreateInfoKHR swapchain_create_info {
+        const VkSwapchainCreateInfoKHR swapchain_create_info {
             .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
             .surface = surface,
             .minImageCount = swapchain_image_count,
@@ -127,6 +145,19 @@ namespace Posideon {
                 .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT
             });
         }
+
+        constexpr auto draw_image_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        draw_image = device.create_image({
+            .image_type = VK_IMAGE_TYPE_2D,
+            .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+            .width = width,
+            .height = height,
+            .usage = static_cast<VkImageUsageFlags>(draw_image_usage),
+            .initial_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .image_view_type = VK_IMAGE_VIEW_TYPE_2D,
+            .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT
+        });
     }
 
     void Renderer::create_command_structures() {
@@ -144,6 +175,50 @@ namespace Posideon {
         }
     }
 
+    void Renderer::create_descriptors() {
+        std::vector<DescriptorAllocator::PoolSizeRatio> sizes {
+            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 }
+        };
+        global_descriptor_allocator.init_pool(device, 10, sizes);
+        draw_image_set_layout = device.create_descriptor_set_layout({
+            VkDescriptorSetLayoutBinding {
+                .binding = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                .descriptorCount = 1,
+                .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+            }
+        });
+        draw_image_set = global_descriptor_allocator.allocate(device, draw_image_set_layout);
+
+        VkDescriptorImageInfo image_info {
+            .imageView = draw_image.image_view,
+            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+        };
+        device.update_descriptor_sets(draw_image_set, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 0, nullptr, &image_info);
+    }
+
+    void Renderer::create_pipelines() {
+        create_background_pipelines();   
+    }
+
+    void Renderer::create_background_pipelines() {
+        gradient_layout = device.create_pipeline_layout({ draw_image_set_layout });
+
+        const std::vector<char> gradient_shader_code = readFile("../assets/shaders/gradient.comp.spv");
+        const VkShaderModule gradient_shader = device.create_shader_module(gradient_shader_code);
+
+        const VkPipelineShaderStageCreateInfo shader_stage {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = gradient_shader,
+            .pName = "main"
+        };
+        gradient_pipeline = device.create_compute_pipeline({
+            .shader_stage = shader_stage,
+            .layout = gradient_layout,
+        });
+    }
+    
     void Renderer::render() {
         device.wait_for_fence(get_current_frame().render_fence);
         device.reset_fence(get_current_frame().render_fence);
@@ -154,19 +229,19 @@ namespace Posideon {
         command_encoder.reset();
         command_encoder.begin();
 
-        command_encoder.transition_image(swapchain_images[image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        VkExtent2D draw_extent { draw_image.extent.width, draw_image.extent.height };
 
-        VkClearColorValue clear_value = { { 0.0f, 0.0f, abs(sin(frame_number / 120.f)), 1.0f } };
-        VkImageSubresourceRange clear_range {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        };
-        vkCmdClearColorImage(command_encoder.m_buffer, swapchain_images[image_index], VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1,  &clear_range);
+        command_encoder.transition_image(draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
-        command_encoder.transition_image(swapchain_images[image_index], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        draw_background(command_encoder);
+
+        command_encoder.transition_image(draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        command_encoder.transition_image(swapchain_images[image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        command_encoder.copy_image_to_image(draw_image.image, swapchain_images[image_index], draw_extent, swapchain_extent);
+
+        command_encoder.transition_image(swapchain_images[image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        
         VkCommandBuffer command_buffer = command_encoder.finish();
 
         VkCommandBufferSubmitInfo command_submit_info {
@@ -188,7 +263,7 @@ namespace Posideon {
             .stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
             .deviceIndex = 0,
         };
-        VkSubmitInfo2 submit {
+        const VkSubmitInfo2 submit {
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
             .waitSemaphoreInfoCount = 1,
             .pWaitSemaphoreInfos = &wait_info,
@@ -200,7 +275,7 @@ namespace Posideon {
         VkResult res = vkQueueSubmit2(queue, 1, &submit, get_current_frame().render_fence);
         POSIDEON_ASSERT(res == VK_SUCCESS)
 
-        VkPresentInfoKHR present_info {
+        const VkPresentInfoKHR present_info {
             .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .waitSemaphoreCount = 1,
             .pWaitSemaphores = &get_current_frame().render_semaphore,
@@ -209,8 +284,15 @@ namespace Posideon {
             .pImageIndices = &image_index
         };
         res = vkQueuePresentKHR(queue, &present_info);
+        POSIDEON_ASSERT(res == VK_SUCCESS)
 
         frame_number++;
+    }
+
+    void Renderer::draw_background(const VulkanCommandEncoder& encoder) const {
+        encoder.bind_pipeline(VK_PIPELINE_BIND_POINT_COMPUTE, gradient_pipeline);
+        encoder.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, gradient_layout, 0, { draw_image_set }, {});
+        encoder.dispatch(std::ceil(draw_image.extent.width / 16.0f), std::ceil(draw_image.extent.height / 16.0f));
     }
 
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface) {
@@ -230,5 +312,17 @@ namespace Posideon {
             }
         }
         return false;
+    }
+
+    std::vector<char> readFile(const std::string& filename) {
+        std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+        size_t fileSize = (size_t) file.tellg();
+        std::vector<char> buffer(fileSize);
+        file.seekg(0);
+        file.read(buffer.data(), fileSize);
+        file.close();
+
+        return buffer;
     }
 }

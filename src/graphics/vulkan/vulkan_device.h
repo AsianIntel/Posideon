@@ -3,19 +3,25 @@
 #include "defines.h"
 #include <vulkan/vulkan.hpp>
 #include <optional>
+#include <vk_mem_alloc.h>
 
 namespace Posideon {
+    class VulkanDevice;
+    
     struct VulkanBuffer {
         VkBuffer buffer = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
     };
 
     struct VulkanImage {
-        VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkImage image;
+        VkImageView image_view;
+        VmaAllocation allocation;
+        VkExtent3D extent;
+        VkFormat format;
     };
 
-    struct PipelineDescriptor {
+    struct GraphicsPipelineDescriptor {
         uint32_t vertex_stride;
         std::vector<VkVertexInputAttributeDescription> vertex_input_attributes;
         std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
@@ -25,6 +31,11 @@ namespace Posideon {
         VkFormat stencil_format;
     };
 
+    struct ComputePipelineDescriptor {
+        VkPipelineShaderStageCreateInfo shader_stage;
+        VkPipelineLayout layout;
+    };
+
     struct ImageDescriptor {
         VkImageType image_type;
         VkFormat format;
@@ -32,13 +43,29 @@ namespace Posideon {
         uint32_t height;
         VkImageUsageFlags usage;
         VkImageLayout initial_layout;
-        VkMemoryPropertyFlags memory_flags;
+        VkImageViewType image_view_type;
+        VkImageAspectFlags aspect_mask;
     };
 
     struct ImageViewDescriptor {
         VkImageViewType image_view_type;
         VkFormat format;
         VkImageAspectFlags aspect_mask;
+    };
+
+    struct DescriptorAllocator {
+        struct PoolSizeRatio {
+            VkDescriptorType type;
+            float ratio;
+        };
+
+        VkDescriptorPool pool;
+
+        void init_pool(const VulkanDevice& device, uint32_t max_sets, const std::vector<PoolSizeRatio>& pool_ratios);
+        void clear_descriptors(const VulkanDevice& device) const;
+        void destroy_pool(const VulkanDevice& device) const;
+
+        VkDescriptorSet allocate(const VulkanDevice& device, VkDescriptorSetLayout layout) const;
     };
 
     struct VulkanPhysicalDevice {
@@ -54,12 +81,14 @@ namespace Posideon {
     class VulkanDevice {
         VulkanPhysicalDevice m_physicalDevice;
         VkDevice m_device;
+        VmaAllocator m_allocator;
 
     private:
         [[nodiscard]] std::optional<uint32_t> get_memory_type_index(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
     public:
-        VulkanDevice(VulkanPhysicalDevice const& physical_device, VkDevice device): m_physicalDevice(physical_device), m_device(device) {}
+        VulkanDevice(VulkanPhysicalDevice const& physical_device, VkDevice device, VmaAllocator allocator):
+            m_physicalDevice(physical_device), m_device(device), m_allocator(allocator) {}
 
         [[nodiscard]] VkQueue get_queue() const;
         [[nodiscard]] VkSurfaceCapabilitiesKHR get_physical_device_surface_capabilities(VkSurfaceKHR surface) const;
@@ -73,7 +102,8 @@ namespace Posideon {
         [[nodiscard]] VkSemaphore create_semaphore() const;
         [[nodiscard]] VkFence create_fence(bool signaled) const;
         [[nodiscard]] VkPipelineLayout create_pipeline_layout(const std::vector<VkDescriptorSetLayout>& set_layouts) const;
-        [[nodiscard]] VkPipeline create_pipeline(const PipelineDescriptor& descriptor) const;
+        [[nodiscard]] VkPipeline create_graphics_pipeline(const GraphicsPipelineDescriptor& descriptor) const;
+        [[nodiscard]] VkPipeline create_compute_pipeline(const ComputePipelineDescriptor& descriptor) const;
         [[nodiscard]] VkShaderModule create_shader_module(const std::vector<char>& code) const;
         [[nodiscard]] VkDescriptorPool create_descriptor_pool(const std::vector<VkDescriptorPoolSize>& pool_sizes) const;
         [[nodiscard]] VkDescriptorSetLayout create_descriptor_set_layout(const std::vector<VkDescriptorSetLayoutBinding>& bindings) const;
@@ -83,14 +113,16 @@ namespace Posideon {
         uint32_t acquire_next_image(VkSwapchainKHR swapchain, VkSemaphore semaphore) const;
         VkResult wait_for_fence(VkFence fence);
         VkResult reset_fence(VkFence fence);
+        void reset_descriptor_pool(VkDescriptorPool pool) const;
         std::vector<VkDescriptorSet> allocate_descriptor_sets(VkDescriptorPool descriptor_pool, const std::vector<VkDescriptorSetLayout>& descriptor_layouts) const;
-        void update_descriptor_sets(VkDescriptorSet set, VkDescriptorType descriptor_type, uint32_t binding, VkDescriptorBufferInfo* buffer_info) const;
+        void update_descriptor_sets(VkDescriptorSet set, VkDescriptorType descriptor_type, uint32_t binding, VkDescriptorBufferInfo* buffer_info, VkDescriptorImageInfo* image_info) const;
         void map_memory(VulkanBuffer buffer, VkDeviceSize size, void** data) const;
         void unmap_memory(VulkanBuffer buffer) const;
 
         void destroy_image_view(VkImageView image_view) const;
         void destroy_swapchain(VkSwapchainKHR swapchain) const;
         void destroy_buffer(VulkanBuffer buffer) const;
+        void destroy_descriptor_pool(VkDescriptorPool pool) const;
 
         VulkanBuffer create_buffer(VkBufferUsageFlags usage, VkDeviceSize size) {
             VkBufferCreateInfo createInfo{

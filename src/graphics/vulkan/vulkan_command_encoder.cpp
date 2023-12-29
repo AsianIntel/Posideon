@@ -81,12 +81,12 @@ namespace Posideon {
         vkCmdSetScissor(m_buffer, 0, 1, &scissor);
     }
 
-    void VulkanCommandEncoder::bind_pipeline(VkPipeline pipeline) const {
-        vkCmdBindPipeline(m_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    void VulkanCommandEncoder::bind_pipeline(VkPipelineBindPoint bind_point, VkPipeline pipeline) const {
+        vkCmdBindPipeline(m_buffer, bind_point, pipeline);
     }
 
-    void VulkanCommandEncoder::bind_descriptor_set(VkPipelineLayout pipeline_layout, uint32_t set, const std::vector<VkDescriptorSet> &sets, const std::vector<uint32_t>& dynamic_offsets) const {
-        vkCmdBindDescriptorSets(m_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, set, static_cast<uint32_t>(sets.size()), sets.data(), static_cast<uint32_t>(dynamic_offsets.size()), dynamic_offsets.data());
+    void VulkanCommandEncoder::bind_descriptor_set(VkPipelineBindPoint bind_point, VkPipelineLayout pipeline_layout, uint32_t set, const std::vector<VkDescriptorSet> &sets, const std::vector<uint32_t>& dynamic_offsets) const {
+        vkCmdBindDescriptorSets(m_buffer, bind_point, pipeline_layout, set, static_cast<uint32_t>(sets.size()), sets.data(), static_cast<uint32_t>(dynamic_offsets.size()), dynamic_offsets.data());
     }
 
     void VulkanCommandEncoder::bind_vertex_buffer(VkBuffer buffer, VkDeviceSize offset) const {
@@ -97,6 +97,42 @@ namespace Posideon {
         vkCmdBindIndexBuffer(m_buffer, buffer, 0, VK_INDEX_TYPE_UINT16);
     }
 
+    void VulkanCommandEncoder::copy_image_to_image(VkImage source, VkImage destination, VkExtent2D src_size, VkExtent2D dst_size) const {
+        VkImageBlit2 blit_region {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+            .srcSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+            .dstSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            }
+        };
+        blit_region.srcOffsets[1].x = src_size.width;
+        blit_region.srcOffsets[1].y = src_size.height;
+        blit_region.srcOffsets[1].z = 1;
+        blit_region.dstOffsets[1].x = dst_size.width;
+        blit_region.dstOffsets[1].y = dst_size.height;
+        blit_region.dstOffsets[1].z = 1;
+
+        const VkBlitImageInfo2 blit_info {
+            .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+            .srcImage = source,
+            .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .dstImage = destination,
+            .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .regionCount = 1,
+            .pRegions = &blit_region,
+            .filter = VK_FILTER_LINEAR
+        };
+        vkCmdBlitImage2(m_buffer, &blit_info);
+    }
+
     void VulkanCommandEncoder::draw(uint32_t vertex_count) const {
         vkCmdDraw(m_buffer, vertex_count, 1, 0, 0);
     }
@@ -105,6 +141,10 @@ namespace Posideon {
         vkCmdDrawIndexed(m_buffer, index_count, 1, 0, 0, 0);
     }
 
+    void VulkanCommandEncoder::dispatch(uint32_t x, uint32_t y) const {
+        vkCmdDispatch(m_buffer, x, y, 1);    
+    }
+    
     void VulkanCommandEncoder::end_rendering() const {
         vkCmdEndRendering(m_buffer);
     }
