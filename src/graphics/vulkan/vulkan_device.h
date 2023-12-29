@@ -102,7 +102,7 @@ namespace Posideon {
         [[nodiscard]] VkSemaphore create_semaphore() const;
         [[nodiscard]] VkFence create_fence(bool signaled) const;
         [[nodiscard]] VkPipelineLayout create_pipeline_layout(const std::vector<VkDescriptorSetLayout>& set_layouts) const;
-        [[nodiscard]] VkPipeline create_graphics_pipeline(const GraphicsPipelineDescriptor& descriptor) const;
+        [[nodiscard]] VkPipeline create_graphics_pipeline(const VkGraphicsPipelineCreateInfo& descriptor) const;
         [[nodiscard]] VkPipeline create_compute_pipeline(const ComputePipelineDescriptor& descriptor) const;
         [[nodiscard]] VkShaderModule create_shader_module(const std::vector<char>& code) const;
         [[nodiscard]] VkDescriptorPool create_descriptor_pool(const std::vector<VkDescriptorPoolSize>& pool_sizes) const;

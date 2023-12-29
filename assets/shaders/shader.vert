@@ -1,20 +1,20 @@
 #version 450
 
-layout (location = 0) in vec3 inPos;
-layout (location = 1) in vec4 inColor;
+layout (location = 0) out vec3 outColor;
 
-layout(std140, set = 0, binding = 0) uniform buf {
-    mat4 model;
-} modelBuf;
-layout(std140, set = 1, binding = 0) uniform camera {
-    mat4 projection;
-    mat4 view;
-} cameraBuf;
+void main()  {
+	const vec3 positions[3] = vec3[3](
+		vec3(1.f,1.f, 0.0f),
+		vec3(-1.f,1.f, 0.0f),
+		vec3(0.f,-1.f, 0.0f)
+	);
 
-layout (location = 0) out vec4 outColor;
+	const vec3 colors[3] = vec3[3](
+		vec3(1.0f, 0.0f, 0.0f), //red
+		vec3(0.0f, 1.0f, 0.0f), //green
+		vec3(00.f, 0.0f, 1.0f)  //blue
+	);
 
-void main() 
-{
-	outColor = inColor;
-	gl_Position = cameraBuf.projection * cameraBuf.view * modelBuf.model * vec4(inPos, 1.0);
+	gl_Position = vec4(positions[gl_VertexIndex], 1.0f);
+	outColor = colors[gl_VertexIndex];
 }

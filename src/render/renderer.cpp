@@ -6,6 +6,7 @@
 
 #include "graphics/vulkan/vulkan_command_encoder.h"
 #include "graphics/vulkan/vulkan_instance.h"
+#include "graphics/vulkan/vulkan_pipeline.h"
 
 namespace Posideon {
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface);
@@ -198,7 +199,8 @@ namespace Posideon {
     }
 
     void Renderer::create_pipelines() {
-        create_background_pipelines();   
+        create_background_pipelines();
+        create_triangle_pipeline();
     }
 
     void Renderer::create_background_pipelines() {
@@ -218,6 +220,28 @@ namespace Posideon {
             .layout = gradient_layout,
         });
     }
+
+    void Renderer::create_triangle_pipeline() {
+        const std::vector<char> vertex_shader_code = readFile("../assets/shaders/shader.vert.spv");
+        const VkShaderModule vertex_shader = device.create_shader_module(vertex_shader_code);
+
+        const std::vector<char> fragment_shader_code = readFile("../assets/shaders/shader.frag.spv");
+        const VkShaderModule fragment_shader = device.create_shader_module(fragment_shader_code);
+
+        triangle_pipeline_layout = device.create_pipeline_layout({});
+        GraphicsPipelineBuilder pipeline_builder;
+        pipeline_builder.pipeline_layout = triangle_pipeline_layout;
+        pipeline_builder.set_shaders(vertex_shader, fragment_shader);
+        pipeline_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        pipeline_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+        pipeline_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
+        pipeline_builder.set_multisampling_none();
+        pipeline_builder.disable_blending();
+        pipeline_builder.disable_depth_test();
+        pipeline_builder.set_color_attachment_format(draw_image.format);
+        pipeline_builder.set_depth_format(VK_FORMAT_UNDEFINED);
+        triangle_pipeline = device.create_graphics_pipeline(pipeline_builder.build());
+    }
     
     void Renderer::render() {
         device.wait_for_fence(get_current_frame().render_fence);
@@ -235,7 +259,11 @@ namespace Posideon {
 
         draw_background(command_encoder);
 
-        command_encoder.transition_image(draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        command_encoder.transition_image(draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+        draw_geometry(command_encoder);
+        
+        command_encoder.transition_image(draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         command_encoder.transition_image(swapchain_images[image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
         command_encoder.copy_image_to_image(draw_image.image, swapchain_images[image_index], draw_extent, swapchain_extent);
@@ -293,6 +321,25 @@ namespace Posideon {
         encoder.bind_pipeline(VK_PIPELINE_BIND_POINT_COMPUTE, gradient_pipeline);
         encoder.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, gradient_layout, 0, { draw_image_set }, {});
         encoder.dispatch(std::ceil(draw_image.extent.width / 16.0f), std::ceil(draw_image.extent.height / 16.0f));
+    }
+
+    void Renderer::draw_geometry(const VulkanCommandEncoder& encoder) const {
+        const VkRect2D draw_extent { 0, 0, draw_image.extent.width, draw_image.extent.height };
+        VkRenderingAttachmentInfo color_attachment {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = draw_image.image_view,
+            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        };
+        encoder.start_rendering(draw_extent, { color_attachment }, nullptr, nullptr);
+
+        encoder.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, triangle_pipeline);
+        encoder.set_viewport(draw_image.extent.width, draw_image.extent.height);
+        encoder.set_scissor(draw_image.extent.width, draw_image.extent.height);
+
+        encoder.draw(3);
+        encoder.end_rendering();
     }
 
     bool check_physical_device(VulkanPhysicalDevice& device, VkSurfaceKHR surface) {

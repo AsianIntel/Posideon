@@ -43,6 +43,9 @@ namespace Posideon {
         VkPipelineLayout gradient_layout;
         VkPipeline gradient_pipeline;
 
+        VkPipelineLayout triangle_pipeline_layout;
+        VkPipeline triangle_pipeline;
+
         FrameData frames[FRAME_OVERLAP];
         size_t frame_number;
 
@@ -52,9 +55,11 @@ namespace Posideon {
         void create_descriptors();
         void create_pipelines();
         void create_background_pipelines();
+        void create_triangle_pipeline();
 
         void render();
         void draw_background(const VulkanCommandEncoder& encoder) const;
+        void draw_geometry(const VulkanCommandEncoder& encoder) const;
 
         FrameData& get_current_frame() { return frames[frame_number % FRAME_OVERLAP]; }
     };
