@@ -5,28 +5,17 @@
 #include <cstdint>
 #include <functional>
 #include <vulkan/vulkan.hpp>
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 
+#include "assets/gltf_loader.h"
 #include "graphics/vulkan/vulkan_device.h"
 #include "graphics/vulkan/vulkan_command_encoder.h"
 #include "window/win32/win32_window.h"
+#include "graphics/vulkan/vulkan_types.h"
 
 namespace Posideon {
     static constexpr uint32_t FRAME_OVERLAP = 2;
-
-    struct Vertex {
-        glm::vec3 position;
-        float uv_x;
-        glm::vec3 normal;
-        float uv_y;
-        glm::vec4 color;
-    };
-
-    struct GPUMeshBuffers {
-        VulkanBuffer index_buffer;
-        VulkanBuffer vertex_buffer;
-        VkDeviceAddress vertex_buffer_address;
-    };
 
     struct GPUDrawPushConstants {
         glm::mat4 world_matrix;
@@ -61,6 +50,7 @@ namespace Posideon {
         DescriptorAllocator global_descriptor_allocator;
 
         VulkanImage draw_image;
+        VulkanImage depth_image;
         VkDescriptorSet draw_image_set;
         VkDescriptorSetLayout draw_image_set_layout;
         
@@ -77,6 +67,7 @@ namespace Posideon {
         size_t frame_number;
 
         GPUMeshBuffers rectangle;
+        std::vector<std::shared_ptr<GltfAsset>> test_meshes;
 
         void create_swapchain();
         void create_command_structures();

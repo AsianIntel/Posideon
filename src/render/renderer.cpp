@@ -3,6 +3,7 @@
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 #include <fstream>
+#include <glm/gtx/transform.hpp>
 
 #include "graphics/vulkan/vulkan_command_encoder.h"
 #include "graphics/vulkan/vulkan_instance.h"
@@ -160,6 +161,17 @@ namespace Posideon {
             .image_view_type = VK_IMAGE_VIEW_TYPE_2D,
             .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT
         });
+
+        depth_image = device.create_image({
+            .image_type = VK_IMAGE_TYPE_2D,
+            .format = VK_FORMAT_D32_SFLOAT,
+            .width = width,
+            .height = height,
+            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .initial_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .image_view_type = VK_IMAGE_VIEW_TYPE_2D,
+            .aspect_mask = VK_IMAGE_ASPECT_DEPTH_BIT
+        });
     }
 
     void Renderer::create_command_structures() {
@@ -246,7 +258,7 @@ namespace Posideon {
         pipeline_builder.disable_blending();
         pipeline_builder.disable_depth_test();
         pipeline_builder.set_color_attachment_format(draw_image.format);
-        pipeline_builder.set_depth_format(VK_FORMAT_UNDEFINED);
+        pipeline_builder.set_depth_format(depth_image.format);
         triangle_pipeline = device.create_graphics_pipeline(pipeline_builder.build());
     }
 
@@ -272,9 +284,9 @@ namespace Posideon {
         pipeline_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
         pipeline_builder.set_multisampling_none();
         pipeline_builder.disable_blending();
-        pipeline_builder.disable_depth_test();
+        pipeline_builder.enable_depth_test(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
         pipeline_builder.set_color_attachment_format(draw_image.format);
-        pipeline_builder.set_depth_format(VK_FORMAT_UNDEFINED);
+        pipeline_builder.set_depth_format(depth_image.format);
         mesh_pipeline = device.create_graphics_pipeline(pipeline_builder.build());
     }
 
@@ -335,6 +347,7 @@ namespace Posideon {
         rect_indices[5] = 3;
 
         rectangle = create_mesh(rect_indices, rect_vertices);
+        test_meshes = load_gltf_meshes(this, "../assets/meshes/basicmesh.glb").value();
     }
     
     void Renderer::render() {
@@ -354,7 +367,8 @@ namespace Posideon {
         draw_background(command_encoder);
 
         command_encoder.transition_image(draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-
+        command_encoder.transition_image(depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        
         draw_geometry(command_encoder);
         
         command_encoder.transition_image(draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -426,23 +440,34 @@ namespace Posideon {
             .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
         };
-        encoder.start_rendering(draw_extent, { color_attachment }, nullptr, nullptr);
+        const VkRenderingAttachmentInfo depth_attachment {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = depth_image.image_view,
+            .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue = { .depthStencil = { .depth = 0.0f } }
+        };
+        encoder.start_rendering(draw_extent, { color_attachment }, &depth_attachment, nullptr);
 
         encoder.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, triangle_pipeline);
         encoder.set_viewport(draw_image.extent.width, draw_image.extent.height);
         encoder.set_scissor(draw_image.extent.width, draw_image.extent.height);
 
-        encoder.draw(3);
+        //encoder.draw(3);
 
         encoder.bind_pipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline);
 
+        glm::mat4 view = glm::translate(glm::vec3{ 0,0,-5 });
+        glm::mat4 projection = glm::perspective(glm::radians(70.0f), static_cast<float>(draw_extent.extent.width) / static_cast<float>(draw_extent.extent.height), 10000.0f, 0.1f);
+        projection[1][1] *= -1;
         GPUDrawPushConstants push_constants {
-            .world_matrix = glm::mat4(1.0f),
-            .vertex_buffer = rectangle.vertex_buffer_address
+            .world_matrix = projection * view,
+            .vertex_buffer = test_meshes[2]->mesh_buffers.vertex_buffer_address
         };
         encoder.push_constants(mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(GPUDrawPushConstants), &push_constants);
-        encoder.bind_index_buffer(rectangle.index_buffer.buffer, VK_INDEX_TYPE_UINT32);
-        encoder.draw_indexed(6);
+        encoder.bind_index_buffer(test_meshes[2]->mesh_buffers.index_buffer.buffer, VK_INDEX_TYPE_UINT32);
+        encoder.draw_indexed(test_meshes[2]->surfaces[0].count, test_meshes[2]->surfaces[0].start_index);
         
         encoder.end_rendering();
     }

@@ -146,8 +146,8 @@ namespace Posideon {
         vkCmdDraw(m_buffer, vertex_count, 1, 0, 0);
     }
 
-    void VulkanCommandEncoder::draw_indexed(uint32_t index_count) const {
-        vkCmdDrawIndexed(m_buffer, index_count, 1, 0, 0, 0);
+    void VulkanCommandEncoder::draw_indexed(uint32_t index_count, uint32_t start_index) const {
+        vkCmdDrawIndexed(m_buffer, index_count, 1, start_index, 0, 0);
     }
 
     void VulkanCommandEncoder::dispatch(uint32_t x, uint32_t y) const {
